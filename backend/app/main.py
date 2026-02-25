@@ -16,7 +16,7 @@ from features.mypage.router import router as mypage_router, init_utensils
 from features.weather.router import router as weather_router
 from features.ranking.router import router as ranking_router, load_today_ranking_cache
 from features.voice.router import router as voice_router
-from models.mysql_db import get_sqlite_connection, init_all_tables
+from models.mysql_db import get_sqlite_connection, init_all_tables, seed_default_users
 
 
 def check_sqlite_connection() -> bool:
@@ -45,8 +45,10 @@ async def lifespan(app: FastAPI):
         try:
             init_all_tables()
             print("DB 테이블 자동 생성 완료")
+            seed_default_users()
+            print("기본 유저 시딩 완료 (퓨 id=1, 게스트 id=2)")
         except Exception as e:
-            print(f"DB 테이블 생성 실패: {e}")
+            print(f"DB 초기화 실패: {e}")
     else:
         print("SQLite DB 연결 실패!")
 

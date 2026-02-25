@@ -857,3 +857,59 @@ def load_mypage_data(member_id: int) -> dict:
         "utensils": utensils,
         "member_utensil_ids": member_utensil_ids,
     }
+
+
+# ══════════════════════════════════════════════════════════════
+# 기본 유저 시딩 (로컬 실행 시 필요)
+# ══════════════════════════════════════════════════════════════
+
+def seed_default_users():
+    """
+    로컬 실행에 필요한 기본 유저 2명을 미리 생성.
+    - id=1 : 퓨 (체험용)
+    - id=2 : 게스트
+    이미 존재하면 건너뜀.
+    """
+    defaults = [
+        {
+            "naver_id": "peu_default",
+            "email": "peu@recipeu.com",
+            "nickname": "퓨",
+            "birthday": "02-06",
+            "mem_photo": "",
+            "mem_type": "DEFAULT",
+        },
+        {
+            "naver_id": "guest_default",
+            "email": "guest@recipeu.com",
+            "nickname": "게스트",
+            "birthday": "01-01",
+            "mem_photo": "",
+            "mem_type": "DEFAULT",
+        },
+    ]
+    with mysql_cursor() as cur:
+        for user in defaults:
+            cur.execute("SELECT id FROM member WHERE naver_id = ?", (user["naver_id"],))
+            if cur.fetchone():
+                continue
+            cur.execute(
+                """
+                INSERT INTO member (naver_id, email, nickname, birthday, mem_photo, mem_type, to_cnt)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    user["naver_id"],
+                    user["email"],
+                    user["nickname"],
+                    user["birthday"],
+                    user["mem_photo"],
+                    user["mem_type"],
+                ),
+            )
+            new_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO personalization (member_id, scope, allergies, dislikes) VALUES (?, 'MEMBER', '[]', '[]')",
+                (new_id,),
+            )
+    logger.info("🌱 [seed] 기본 유저 시딩 완료 (퓨 id=1, 게스트 id=2)")

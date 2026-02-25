@@ -9,8 +9,9 @@ export const useChatAgent = (sessionId) => {
   const [lastRecommendation, setLastRecommendation] = useState(null);
 
   const wsRef = useRef(null);
-  const API_URL = import.meta.env.VITE_API_URL || "http://211.188.62.72:8080";
-  const WS_URL = import.meta.env.VITE_WS_URL || "ws://211.188.62.72:8080";
+  const API_URL = import.meta.env.VITE_API_URL || "";
+  const WS_URL = import.meta.env.VITE_WS_URL ||
+    (window.location.protocol === "https:" ? "wss:" : "ws:") + "//" + window.location.host;
 
   useEffect(() => {
     // WebSocket 연결

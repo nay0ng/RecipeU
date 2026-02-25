@@ -1,112 +1,67 @@
+const BASE = "/assets";
+
 export const RECIPE_IMAGES = {
-  "add-user":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/add-user.webp",
-  "air-fryer":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/air-fryer.webp",
-  "back-icon":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/back-icon.webp",
-  blender:
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/blender.webp",
-  "chef-mascot":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/chef-mascot.webp",
-  "citrus-juicer":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/citrus-juicer.webp",
-  "coffe-machine":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/coffe-machine.webp",
-  "cook-bg-brown":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cook-bg-brown.webp",
-  "cook-bg-green":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cook-bg-green.webp",
-  "cook-bg-yellow":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cook-bg-yellow.webp",
-  "cook-complete-alert":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cook-complete-alert.webp",
-  "cook-peu-image":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cook-peu-image.webp",
-  "cook-potato-wink":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cook-potato-wink.webp",
-  cooked:
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cooked.webp",
-  "exit-icon":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/exit-icon.webp",
-  "food-steamer":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/food-steamer.webp",
-  house: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/house.webp",
-  "left-arrow":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/left-arrow.webp",
-  "level-icon":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/level-icon.webp",
-  "login-naver":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/login-naver.webp",
-  "main-bg":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/main-bg.webp",
-  "main-character":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/main-character.webp",
-  "main-next":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/main-next.webp",
-  "main-profile":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/main-profile.webp",
-  "main-weather":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/main-weather.webp",
-  "my-recipe-board":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-board.webp",
-  "my-recipe-borderline-beige":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-borderline-beige.webp",
-  "my-recipe-clip-beige":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-clip-beige.webp",
-  "my-recipe-clip-orange":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-clip-orange.webp",
-  "my-recipe-close":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-close.webp",
-  "my-recipe-level":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-level.webp",
-  "my-recipe-time":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/my-recipe-time.webp",
-  "nav-chat-click":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-chat-click.webp",
-  "nav-chat-non":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-chat-non.webp",
-  "nav-cook-click":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-cook-click.webp",
-  "nav-cook-non":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-cook-non.webp",
-  "nav-home-click":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-home-click.webp",
-  "nav-home-non":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-home-non.webp",
-  "nav-my-click":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-my-click.webp",
-  "nav-my-non":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/nav-my-non.webp",
-  oven: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/oven.webp",
-  "potato-face":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/potato-face.webp",
-  potato_face:
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/potato_face.webp",
-  "rice-cooker":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/rice-cooker.webp",
-  "splash-bg":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/splash-bg.webp",
-  "splash-potato":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/splash-potato.webp",
-  "stovetop-waffle":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/stovetop-waffle.webp",
-  "time-icon":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/time-icon.webp",
-  "toast-appliance":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/toast-appliance.webp",
-  "birthday-main-character_v2":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/birthday-main-character_v2.webp",
-  cloud: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/cloud.webp",
-  rain: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/rain.webp",
-  snow: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/snow.webp",
-  storm: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/storm.webp",
-  sun: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/sun.webp",
-  wind: "https://kr.object.ncloudstorage.com/recipu-bucket/assets/wind.webp",
-  "loading-motion":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/loading-motion.webp",
-  "loading-bg-phone":
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/loading-bg-phone.webp",
-  default_img:
-    "https://kr.object.ncloudstorage.com/recipu-bucket/assets/default_img.webp",
+  "add-user":                    `${BASE}/add-user.webp`,
+  "air-fryer":                   `${BASE}/air-fryer.webp`,
+  "back-icon":                   `${BASE}/back-icon.webp`,
+  blender:                       `${BASE}/blender.webp`,
+  "chef-mascot":                 `${BASE}/chef-mascot.webp`,
+  "citrus-juicer":               `${BASE}/citrus-juicer.webp`,
+  "coffe-machine":               `${BASE}/coffe-machine.webp`,
+  "cook-bg-brown":               `${BASE}/cook-bg-brown.webp`,
+  "cook-bg-green":               `${BASE}/cook-bg-green.webp`,
+  "cook-bg-yellow":              `${BASE}/cook-bg-yellow.webp`,
+  "cook-complete-alert":         `${BASE}/cook-complete-alert.webp`,
+  "cook-peu-image":              `${BASE}/cook-peu-image.webp`,
+  "cook-potato-wink":            `${BASE}/cook-potato-wink.webp`,
+  cooked:                        `${BASE}/cooked.webp`,
+  "exit-icon":                   `${BASE}/exit-icon.webp`,
+  "food-steamer":                `${BASE}/food-steamer.webp`,
+  house:                         `${BASE}/house.webp`,
+  "left-arrow":                  `${BASE}/left-arrow.webp`,
+  "level-icon":                  `${BASE}/level-icon.webp`,
+  "login-naver":                 `${BASE}/login-naver.webp`,
+  "main-bg":                     `${BASE}/main-bg.webp`,
+  "main-character":              `${BASE}/main-character.webp`,
+  "main-next":                   `${BASE}/main-next.webp`,
+  "main-profile":                `${BASE}/main-profile.webp`,
+  "main-weather":                `${BASE}/main-weather.webp`,
+  "my-recipe-board":             `${BASE}/my-recipe-board.webp`,
+  "my-recipe-borderline-beige":  `${BASE}/my-recipe-borderline-beige.webp`,
+  "my-recipe-clip-beige":        `${BASE}/my-recipe-clip-beige.webp`,
+  "my-recipe-clip-orange":       `${BASE}/my-recipe-clip-orange.webp`,
+  "my-recipe-close":             `${BASE}/my-recipe-close.webp`,
+  "my-recipe-level":             `${BASE}/my-recipe-level.webp`,
+  "my-recipe-time":              `${BASE}/my-recipe-time.webp`,
+  "nav-chat-click":              `${BASE}/nav-chat-click.webp`,
+  "nav-chat-non":                `${BASE}/nav-chat-non.webp`,
+  "nav-cook-click":              `${BASE}/nav-cook-click.webp`,
+  "nav-cook-non":                `${BASE}/nav-cook-non.webp`,
+  "nav-home-click":              `${BASE}/nav-home-click.webp`,
+  "nav-home-non":                `${BASE}/nav-home-non.webp`,
+  "nav-my-click":                `${BASE}/nav-my-click.webp`,
+  "nav-my-non":                  `${BASE}/nav-my-non.webp`,
+  oven:                          `${BASE}/oven.webp`,
+  "potato-face":                 `${BASE}/potato-face.webp`,
+  potato_face:                   `${BASE}/potato_face.webp`,
+  "rice-cooker":                 `${BASE}/rice-cooker.webp`,
+  "splash-bg":                   `${BASE}/splash-bg.webp`,
+  "splash-potato":               `${BASE}/splash-potato.webp`,
+  "stovetop-waffle":             `${BASE}/stovetop-waffle.webp`,
+  "time-icon":                   `${BASE}/time-icon.webp`,
+  "toast-appliance":             `${BASE}/toast-appliance.webp`,
+  "birthday-main-character_v2":  `${BASE}/birthday-main-character_v2.webp`,
+  cloud:                         `${BASE}/cloud.webp`,
+  rain:                          `${BASE}/rain.webp`,
+  snow:                          `${BASE}/snow.webp`,
+  storm:                         `${BASE}/storm.webp`,
+  sun:                           `${BASE}/sun.webp`,
+  wind:                          `${BASE}/wind.webp`,
+
+  // public/ 에 이미 존재하는 파일들은 직접 참조
+  "loading-motion":    "/loading-motion.gif",
+  "loading-bg-phone":  "/loading-bg-phone.png",
+
+  // 레시피 이미지 없을 때 기본 대체 이미지 (public/ 에 존재)
+  default_img:         "/peu_wink.png",
 };

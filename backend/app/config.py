@@ -51,12 +51,8 @@ class Settings(BaseSettings):
 
     USE_RERANKER: bool = False
 
-    # MySQL (Naver Cloud)
-    MYSQL_HOST: str = ""
-    MYSQL_PORT: int = 3306
-    MYSQL_USER: str = ""
-    MYSQL_PASSWORD: str = ""
-    MYSQL_DATABASE: str = ""
+    # SQLite (로컬 DB)
+    SQLITE_PATH: str = "./recipeu.db"
     
     class Config:
         env_file = ".env"

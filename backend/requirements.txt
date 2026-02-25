@@ -33,7 +33,6 @@ typing-extensions==4.15.0
 python-multipart==0.0.22
 
 pymongo
-pymysql
 polars
 motor
 

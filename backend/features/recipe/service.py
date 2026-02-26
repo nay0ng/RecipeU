@@ -2,10 +2,8 @@
 """
 Recipe 비즈니스 로직
 """
-import os
 import re
 import json
-from pymongo import MongoClient
 from typing import List, Dict, Any
 from toon_format import decode as toon_decode
 from .prompts import RECIPE_QUERY_EXTRACTION_PROMPT, RECIPE_GENERATION_PROMPT, RECIPE_DETAIL_EXPANSION_PROMPT
@@ -296,10 +294,6 @@ def _parse_recipe_response(response_text: str, servings: int = 1) -> dict:
 
 class RecipeService:
     def __init__(self, rag_system, recipe_db, user_profile=None):
-        mongo_uri = os.getenv("MONGO_URI", "mongodb://root:RootPassword123@136.113.251.237:27017/admin")
-        self.mongo_client = MongoClient(mongo_uri)
-        self.recipe_db = self.mongo_client["recipe_db"]
-        self.recipes_collection = self.recipe_db["recipes"]
         self.rag = rag_system
         self.db = recipe_db
         self.user_profile = user_profile or {}
@@ -320,8 +314,13 @@ class RecipeService:
         
         print(f"[RecipeService] 생성된 검색 쿼리: {search_query}")
         
-        # 2. RAG 검색
-        retrieved_docs = self.rag.search_recipes(search_query, k=3, use_rerank=False)
+        # 2. RAG 검색 (Neo4j - allergies/tools 필터 포함)
+        allergies = member_info.get('allergies', []) if member_info else []
+        user_tools = member_info.get('tools', []) if member_info else []
+        retrieved_docs = self.rag.search_recipes(
+            search_query, k=3, use_rerank=False,
+            allergies=allergies, user_tools=user_tools
+        )
         
         print(f"[RecipeService] RAG 검색 결과: {len(retrieved_docs)}개")
         
@@ -349,16 +348,13 @@ class RecipeService:
         if from_web_search:
             # 웹 검색이면 기본 이미지
             print(f"[RecipeService] 웹 검색 레시피 → 기본 이미지 사용")
-            best_image = 'https://kr.object.ncloudstorage.com/recipu-bucket/assets/default_img.webp'
+            best_image = '/default-food.jpg'
         else:
-            # RAG 검색이면 MongoDB에서 찾기 (미사여구 제거)
-            if recipe_title:
-                best_image = self._find_image_by_title(recipe_title)
-            
-            # MongoDB에서도 못 찾으면 원본 검색 결과에서
+            # Neo4j 검색 결과 메타데이터에서 이미지 가져오기
+            best_image = self._get_best_image(filtered_docs)
             if not best_image:
-                print(f"[RecipeService] 제목 검색 실패 → 원본 검색 결과 사용")
-                best_image = self._get_best_image(filtered_docs)
+                print(f"[RecipeService] 이미지 없음 → 기본 이미지 사용")
+                best_image = '/default-food.jpg'
         
         print(f"[RecipeService] 선택된 이미지: {best_image or '기본 이미지'}")
         
@@ -395,16 +391,8 @@ class RecipeService:
 
         print(f"[RecipeService] 상세 레시피 생성 완료: {recipe_json.get('title')}")
 
-        # 2. 이미지 찾기 (JSON에서 추출한 제목으로 검색)
-        recipe_title = recipe_json.get('title', '')
-        best_image = ""
-        if recipe_title:
-            best_image = self._find_image_by_title(recipe_title)
-
-        # 이미지를 못 찾으면 기본 이미지
-        if not best_image:
-            print(f"[RecipeService] 이미지 검색 실패 → 기본 이미지 사용")
-            best_image = 'https://kr.object.ncloudstorage.com/recipu-bucket/assets/default_img.webp'
+        # 2. 기본 이미지 사용 (기존 레시피 확장은 RAG 검색 없음)
+        best_image = '/default-food.jpg'
 
         print(f"[RecipeService] 선택된 이미지: {best_image[:60]}...")
 
@@ -496,79 +484,14 @@ class RecipeService:
             traceback.print_exc()
             raise
 
-    def _find_image_by_title(self, title: str) -> str:
-        """
-        MongoDB에서 제목으로 이미지 직접 검색 (정확한 매칭만)
-        """
-        try:
-            # ✅ 미사여구 제거
-            clean_title = title
-            clean_title = re.sub(r'\([^)]*\)', '', clean_title)  # 괄호 안 내용 제거
-            clean_title = re.sub(r'\[[^\]]*\]', '', clean_title)  # 대괄호 안 내용 제거
-            clean_title = re.sub(r'[~!@#$%^&*()_+|<>?:{}]', '', clean_title)  # 특수문자 제거
-            clean_title = re.sub(r'\s+', ' ', clean_title)  # 연속 공백 제거
-            clean_title = clean_title.strip()
-
-            print(f"[RecipeService] 정제된 제목: '{title}' → '{clean_title}'")
-
-            # ✅ 정확한 제목 매칭만 시도 (공백 무시)
-            # 예: "매운 돼지불고기"는 "매운돼지불고기", "매운 돼지 불고기" 모두 매칭
-            clean_title_no_space = clean_title.replace(" ", "")
-
-            # 공백 제거한 제목으로 검색
-            recipe = self.recipes_collection.find_one(
-                {"title": {"$regex": f"^{re.escape(clean_title_no_space)}$", "$options": "i"}},
-                {"image": 1, "recipe_id": 1, "title": 1, "_id": 0}
-            )
-
-            # 못 찾으면 원본 제목으로 재시도
-            if not recipe:
-                recipe = self.recipes_collection.find_one(
-                    {"title": {"$regex": f"^{re.escape(clean_title)}$", "$options": "i"}},
-                    {"image": 1, "recipe_id": 1, "title": 1, "_id": 0}
-                )
-
-            if recipe and "image" in recipe:
-                image_url = recipe["image"]
-                matched_title = recipe.get("title", "")
-                print(f"[RecipeService] MongoDB 제목 매칭 성공: {matched_title}")
-                print(f"[RecipeService] 이미지: {image_url[:60]}...")
-                return image_url
-
-            print(f"[RecipeService] MongoDB에서 정확히 일치하는 '{clean_title}' 찾지 못함 → 디폴트 이미지 사용")
-            return ""
-
-        except Exception as e:
-            print(f"[RecipeService] MongoDB 제목 검색 실패: {e}")
-            return ""
-    
-    def _get_image_from_mongo(self, recipe_id: str) -> str:
-        """MongoDB에서 레시피 이미지 URL 가져오기"""
-        try:
-            recipe = self.recipes_collection.find_one(
-                {"recipe_id": recipe_id},
-                {"image": 1, "_id": 0}
-            )
-            
-            if recipe and "image" in recipe:
-                image_url = recipe["image"]
-                print(f"[RecipeService] MongoDB 이미지: {image_url[:50]}...")
-                return image_url
-            else:
-                print(f"[RecipeService] MongoDB에 이미지 없음: recipe_id={recipe_id}")
-                return ""
-                
-        except Exception as e:
-            print(f"[RecipeService] MongoDB 이미지 조회 실패: {e}")
-            return ""
-    
     def _get_best_image(self, filtered_docs: List[Dict]) -> str:
-        """
-        필터링된 레시피 중 이미지 선택
-        제목 검색 실패 후 여기 온 거면 그냥 기본 이미지 사용
-        """
-        print("[RecipeService] 제목 검색 실패 → 기본 이미지 사용")
-        return "https://kr.object.ncloudstorage.com/recipu-bucket/assets/default_img.webp"
+        """Neo4j 검색 결과 메타데이터에서 이미지 URL 가져오기"""
+        for doc in filtered_docs:
+            img = (doc.get("metadata") or {}).get("image_url", "")
+            if img:
+                print(f"[RecipeService] Neo4j 이미지 URL: {img[:60]}...")
+                return img
+        return ""
     
     def _extract_search_query_with_llm(
         self, 

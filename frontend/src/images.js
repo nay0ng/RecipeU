@@ -69,7 +69,7 @@ export const RECIPE_IMAGES = {
 
   // 실제 파일 없는 키 → 유사한 파일로 대체
   "back-icon":    "/left-arrow.png",      // back-icon.png 없음
-  "cook-bg-green": "/cook-bg-brown.png",  // cook-bg-green.png 없음
+  "cook-bg-green": "/cook-bg-green.png",
   "cook-peu-image": "/peu_cook.png",      // cook-peu-image.png 없음
   "nav-home-click": "/nav-home-non.png",  // nav-home-click.png 없음
 

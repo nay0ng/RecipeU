@@ -3,18 +3,22 @@ export const RECIPE_IMAGES = {
   // 실제 존재하는 파일 (.png)
   "add-user":                    "/add-user.png",
   "air-fryer":                   "/air-fryer.png",
+  "birthday-main-character":     "/birthday-main-character.png",
+  "birthday-main-character_v2":  "/birthday-main-character_v2.png",
   blender:                       "/blender.png",
   "chef-mascot":                 "/chef-mascot.png",
   "citrus-juicer":               "/citrus-juicer.png",
   "coffe-machine":               "/coffe-machine.png",
   "cook-bg-brown":               "/cook-bg-brown.png",
   "cook-bg-yellow":              "/cook-bg-yellow.png",
+  "cook-complete-alert":         "/cook-complete-alert.png",
   "cook-potato-wink":            "/cook-potato-wink.png",
   cooked:                        "/cooked.png",
   "exit-icon":                   "/exit-icon.png",
   "food-steamer":                "/food-steamer.png",
   house:                         "/house.png",
   "left-arrow":                  "/left-arrow.png",
+  "level-icon":                  "/level-icon.png",
   "login-naver":                 "/login-naver.png",
   "main-bg":                     "/main-bg.png",
   "main-character":              "/main-character.png",
@@ -36,33 +40,40 @@ export const RECIPE_IMAGES = {
   "nav-my-click":                "/nav-my-click.png",
   "nav-my-non":                  "/nav-my-non.png",
   oven:                          "/oven.png",
+  "peu_banjuk":                  "/peu_banjuk.png",
+  "peu_chicken":                 "/peu_chicken.png",
+  "peu_cook":                    "/peu_cook.png",
+  "peu_gimbab":                  "/peu_gimbab.png",
+  "peu_hurai":                   "/peu_hurai.png",
+  "peu_icecream":                "/peu_icecream.png",
+  "peu_pizza":                   "/peu_pizza.png",
+  "peu_ramen":                   "/peu_ramen.png",
+  "peu_salad":                   "/peu_salad.png",
+  "peu_wink":                    "/peu_wink.png",
   "potato-face":                 "/potato-face.png",
   potato_face:                   "/potato-face.png",
   "rice-cooker":                 "/rice-cooker.png",
   "splash-bg":                   "/splash-bg.png",
   "splash-potato":               "/splash-potato.png",
   "stovetop-waffle":             "/stovetop-waffle.png",
+  "time-icon":                   "/time-icon.png",
   "toast-appliance":             "/toast-appliance.png",
 
-  // public/ 에 없는 키 → 유사한 기존 파일로 대체
-  "back-icon":                   "/left-arrow.png",
-  "cook-bg-green":               "/cook-bg-brown.png",
-  "cook-complete-alert":         "/cook-potato-wink.png",
-  "cook-peu-image":              "/chef-mascot.png",
-  "level-icon":                  "/my-recipe-level.png",
-  "time-icon":                   "/my-recipe-time.png",
-  "nav-home-click":              "/nav-home-non.png",   // click 파일 없음 → non으로 대체
-  "birthday-main-character_v2":  "/main-character.png", // 파일 없음 → main-character 대체
+  // 날씨 아이콘 (이제 실제 파일 있음)
+  cloud: "/cloud.png",
+  rain:  "/rain.png",
+  snow:  "/snow.png",
+  storm: "/storm.png",
+  sun:   "/sun.png",
+  wind:  "/wind.png",
 
-  // 날씨 아이콘 (파일 없음 → main-weather 대체)
-  cloud:  "/main-weather.png",
-  rain:   "/main-weather.png",
-  snow:   "/main-weather.png",
-  storm:  "/main-weather.png",
-  sun:    "/main-weather.png",
-  wind:   "/main-weather.png",
+  // 실제 파일 없는 키 → 유사한 파일로 대체
+  "back-icon":    "/left-arrow.png",      // back-icon.png 없음
+  "cook-bg-green": "/cook-bg-brown.png",  // cook-bg-green.png 없음
+  "cook-peu-image": "/peu_cook.png",      // cook-peu-image.png 없음
+  "nav-home-click": "/nav-home-non.png",  // nav-home-click.png 없음
 
-  // 그 외 기존 파일
+  // 로딩
   "loading-motion":   "/loading-motion.gif",
   "loading-bg-phone": "/loading-bg-phone.png",
 

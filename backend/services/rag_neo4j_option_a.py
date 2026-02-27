@@ -1,0 +1,602 @@
+"""
+services/rag_neo4j_option_a.py
+[옵션 A] 2단계 LLM 접근: Query Rewrite → Cypher 생성 → Neo4j 실행
+
+흐름:
+  1. LLM 호출 #1: 사용자 쿼리 정제 (오타/구어체 → 표준 검색어)
+  2. LLM 호출 #2: 정제된 쿼리로 Cypher 쿼리 생성
+  3. Neo4j에서 Cypher 실행
+  4. Cypher 실패 시 → 키워드 검색 폴백
+
+비교 대상: rag_neo4j_option_b.py (1단계: 바로 Cypher 생성)
+"""
+
+import json
+import os
+import http.client
+import re
+from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+from neo4j import GraphDatabase
+
+try:
+    from langchain_naver import ChatClovaX
+except ImportError:
+    from langchain_community.chat_models import ChatClovaX
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
+
+try:
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+except ImportError:
+    from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+
+import time
+
+load_dotenv()
+
+
+def _t():
+    return time.time()
+
+def _log_step(label: str, start: float, end: float):
+    print(f"  ⏱️  [{label}] {end - start:.1f}초")
+
+
+# ─────────────────────────────────────────────
+# ClovaStudioReranker (기존 그대로)
+# ─────────────────────────────────────────────
+class ClovaStudioReranker:
+    def __init__(self, api_key: str, request_id: str = "recipe-rag-rerank"):
+        self.host = 'clovastudio.stream.ntruss.com'
+        self.api_key = f'Bearer {api_key}'
+        self.request_id = request_id
+
+    def rerank(self, query: str, documents: List[Dict[str, str]], max_tokens: int = 1024) -> Dict:
+        headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Authorization': self.api_key,
+            'X-NCP-CLOVASTUDIO-REQUEST-ID': self.request_id
+        }
+        request_data = {"documents": documents, "query": query, "maxTokens": max_tokens}
+        try:
+            conn = http.client.HTTPSConnection(self.host)
+            conn.request('POST', '/v1/api-tools/reranker', json.dumps(request_data), headers)
+            response = conn.getresponse()
+            result = json.loads(response.read().decode(encoding='utf-8'))
+            conn.close()
+            if result.get('status', {}).get('code') == '20000':
+                return result.get('result', {})
+            else:
+                print(f"[WARNING] Reranker API 오류: {result}")
+                return None
+        except Exception as e:
+            print(f"[ERROR] Reranker API 호출 실패: {e}")
+            return None
+
+
+# ─────────────────────────────────────────────
+# RecipeRAGLangChain (옵션 A: 2단계 LLM)
+# ─────────────────────────────────────────────
+class RecipeRAGLangChain:
+
+    # 필수 RETURN 필드 (Neo4j → _record_to_document에서 사용)
+    _REQUIRED_RETURN = (
+        "r.id AS recipe_id, r.title AS title, r.intro AS intro, "
+        "r.cook_time AS cook_time, r.level AS level, "
+        "r.author AS author, r.detail_url AS source, "
+        "r.image AS image, r.steps AS steps, "
+        "r.cooking_tools AS cooking_tools"
+    )
+
+    def __init__(
+        self,
+        use_reranker: bool = True,
+        chat_model: str = "HCX-DASH-001",
+        temperature: float = 0,
+        max_tokens: int = 2000,
+    ):
+        print("\n" + "="*60)
+        print("Recipe RAG System [옵션 A: 2단계 LLM] (Rewrite → Cypher)")
+        print("="*60)
+
+        print(f"\n[1/3] CLOVA X Chat 모델 초기화 중 (model: {chat_model})")
+        self.chat_model = ChatClovaX(
+            model=chat_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        print("[OK] Chat 모델 초기화 완료")
+
+        print("\n[2/3] CLOVA Studio Reranker 초기화 중")
+        self.reranker = None
+        self.use_reranker = use_reranker
+        if use_reranker:
+            api_key = os.getenv("CLOVASTUDIO_RERANKER_API_KEY")
+            request_id = os.getenv("CLOVASTUDIO_REQUEST_ID", "recipe-rag-rerank")
+            if api_key:
+                self.reranker = ClovaStudioReranker(api_key=api_key, request_id=request_id)
+                print("[OK] CLOVA Studio Reranker 활성화")
+            else:
+                print("[WARNING] CLOVASTUDIO_RERANKER_API_KEY 없음. Reranker 비활성화.")
+                self.use_reranker = False
+
+        print("\n[3/3] Neo4j 연결 중")
+        self.neo4j_driver = GraphDatabase.driver(
+            os.getenv("NEO4J_URI"),
+            auth=(os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD"))
+        )
+        with self.neo4j_driver.session() as session:
+            count = session.run("MATCH (r:Recipe) RETURN count(r) AS cnt").single()["cnt"]
+            print(f"[OK] Neo4j 연결 성공 (레시피 {count:,}개)")
+
+        print("\n" + "="*60)
+        print("시스템 초기화 완료 [옵션 A: 2단계 LLM]")
+        print("="*60 + "\n")
+
+    # ─────────────────────────────────────────────
+    # 1단계: 쿼리 리라이트 (LLM 호출 #1)
+    # ─────────────────────────────────────────────
+    def _rewrite_query(self, user_query: str) -> str:
+        """사용자 쿼리를 정제된 레시피 검색어로 변환"""
+        t_start = _t()
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """당신은 한국 요리 검색 전문가입니다.
+사용자 입력을 레시피 검색에 최적화된 핵심 검색어로 변환하세요.
+
+규칙:
+- 오타/구어체 → 표준 요리명/재료명으로 보정
+- 모호한 표현 → 구체적으로 변환
+- 핵심 재료명, 요리명, 조리법 키워드 추출
+- 한국어, 검색어만 출력 (설명/문장 없이)
+
+예시:
+입력: "돼지고기볶음" → 출력: "돼지고기 볶음"
+입력: "에어프라이기로 만드는 바삭한거" → 출력: "에어프라이어 바삭 튀김"
+입력: "달걀로 뭐 해먹을수있어" → 출력: "달걀 요리"
+입력: "땡초넣은 파스타" → 출력: "청양고추 파스타"
+입력: "빨리 만들 수 있는 아침밥" → 출력: "간단 아침 식사 요리" """),
+            ("human", "{query}")
+        ])
+        chain = prompt | self.chat_model
+        result = chain.invoke({"query": user_query})
+        rewritten = result.content.strip()
+        _log_step("LLM 호출 #1 (쿼리 리라이트)", t_start, _t())
+        print(f"  ✏️  [리라이트] '{user_query}' → '{rewritten}'")
+        return rewritten
+
+    # ─────────────────────────────────────────────
+    # 2단계: Cypher 생성 (LLM 호출 #2)
+    # ─────────────────────────────────────────────
+    def _generate_cypher(
+        self,
+        rewritten_query: str,
+        allergies: List[str],
+        user_tools: List[str],
+        k: int,
+    ) -> str:
+        """정제된 쿼리로 Neo4j Cypher 쿼리 생성"""
+        t_start = _t()
+
+        allergy_info = f"{allergies}" if allergies else "없음"
+        tool_info = f"{user_tools}" if user_tools else "제한 없음"
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", f"""당신은 Neo4j Cypher 전문가입니다.
+
+## Neo4j 스키마
+- (Recipe) 노드: id, title, intro, cook_time, level, author, detail_url, image, steps, cooking_tools(리스트)
+- (Ingredient) 노드: name
+- 관계: (Recipe)-[:CONTAINS]->(Ingredient)
+
+## 제약사항
+- 알레르기 제외 재료: {allergy_info}
+- 사용 가능한 도구: {tool_info}
+
+## 필수 RETURN 필드 (정확히 이 형식으로)
+{self._REQUIRED_RETURN}
+
+## Cypher 생성 규칙
+1. 제목 매칭 우선: r.title CONTAINS '키워드'
+2. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{name: "재료명"}}) 조건 추가
+3. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
+4. LIMIT {k}
+5. Cypher 쿼리만 출력 (설명/마크다운 없이)"""),
+            ("human", "검색어: {query}")
+        ])
+        chain = prompt | self.chat_model
+        result = chain.invoke({"query": rewritten_query})
+        cypher = result.content.strip()
+
+        # 마크다운 코드블록 제거
+        cypher = re.sub(r'^```(?:cypher)?\n?', '', cypher)
+        cypher = re.sub(r'\n?```$', '', cypher)
+        cypher = cypher.strip()
+
+        _log_step("LLM 호출 #2 (Cypher 생성)", t_start, _t())
+        print(f"  🔧 [생성된 Cypher]\n{cypher}")
+        return cypher
+
+    # ─────────────────────────────────────────────
+    # Neo4j 실행 (+ 키워드 폴백)
+    # ─────────────────────────────────────────────
+    def _neo4j_search(
+        self,
+        query: str,
+        k: int,
+        allergies: List[str] = None,
+        user_tools: List[str] = None,
+    ) -> List[tuple]:
+        t_start = _t()
+        allergies = allergies or []
+        user_tools = user_tools or []
+
+        # ── 1단계: 쿼리 리라이트 ──
+        rewritten = self._rewrite_query(query)
+
+        # ── 2단계: Cypher 생성 ──
+        cypher = self._generate_cypher(rewritten, allergies, user_tools, k)
+
+        # ── 3단계: Cypher 실행 ──
+        results = []
+        seen_ids = set()
+
+        try:
+            with self.neo4j_driver.session() as session:
+                records = session.run(cypher)
+                for record in records:
+                    rid = record["recipe_id"]
+                    if rid not in seen_ids:
+                        seen_ids.add(rid)
+                        results.append((self._record_to_document(record), 0.0))
+            print(f"  ✅ [Cypher 실행 성공] {len(results)}개")
+        except Exception as e:
+            print(f"  [WARNING] Cypher 실행 실패: {e}")
+            print(f"  [FALLBACK] 키워드 검색으로 전환")
+            results = self._keyword_fallback(rewritten, k, allergies, user_tools, seen_ids)
+
+        # 부족하면 키워드 폴백으로 보완
+        if len(results) < k:
+            extra = self._keyword_fallback(rewritten, k - len(results), allergies, user_tools, seen_ids)
+            results.extend(extra)
+
+        _log_step("Neo4j 검색 합계 (2단계 LLM)", t_start, _t())
+        return results
+
+    def _keyword_fallback(
+        self,
+        query: str,
+        k: int,
+        allergies: List[str],
+        user_tools: List[str],
+        seen_ids: set,
+    ) -> List[tuple]:
+        """LLM Cypher 실패 시 키워드 기반 검색으로 폴백"""
+        results = []
+
+        allergy_clause = ""
+        if allergies:
+            conditions = " AND ".join(
+                [f'NOT (r)-[:CONTAINS]->(:Ingredient {{name: "{a}"}})' for a in allergies]
+            )
+            allergy_clause = f"AND {conditions}"
+
+        tool_clause = ""
+        if user_tools:
+            tool_clause = f"AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools, ensure_ascii=False)})"
+
+        with self.neo4j_driver.session() as session:
+            # 제목 키워드 매칭
+            title_query = f"""
+                MATCH (r:Recipe)
+                WHERE r.title CONTAINS $query
+                {allergy_clause}
+                {tool_clause}
+                RETURN {self._REQUIRED_RETURN}
+                LIMIT $k
+            """
+            for record in session.run(title_query, query=query, k=k):
+                rid = record["recipe_id"]
+                if rid not in seen_ids:
+                    seen_ids.add(rid)
+                    results.append((self._record_to_document(record), 0.0))
+
+            # 재료명 매칭으로 보완
+            if len(results) < k:
+                remaining = k - len(results)
+                ing_query = f"""
+                    MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)
+                    WHERE i.name CONTAINS $query
+                    {allergy_clause}
+                    {tool_clause}
+                    WITH r, count(i) AS match_count
+                    ORDER BY match_count DESC
+                    RETURN {self._REQUIRED_RETURN}
+                    LIMIT $remaining
+                """
+                for record in session.run(ing_query, query=query, remaining=remaining):
+                    rid = record["recipe_id"]
+                    if rid not in seen_ids:
+                        seen_ids.add(rid)
+                        results.append((self._record_to_document(record), 1.0))
+
+        print(f"  🔄 [폴백] {len(results)}개")
+        return results
+
+    def _record_to_document(self, record) -> Document:
+        title = record["title"] or "N/A"
+        intro = record["intro"] or ""
+        steps = record["steps"] or ""
+        page_content = f"{title}\n{intro}\n\n{steps}"
+        return Document(
+            page_content=page_content,
+            metadata={
+                "title":         title,
+                "author":        record["author"] or "N/A",
+                "source":        record["source"] or "N/A",
+                "cook_time":     record["cook_time"] or "N/A",
+                "level":         record["level"] or "N/A",
+                "recipe_id":     record["recipe_id"] or "",
+                "image_url":     record["image"] or "",
+                "cooking_tools": record["cooking_tools"] or [],
+            }
+        )
+
+    def _rerank_documents(self, query: str, documents: List[Document], top_n: int = 5) -> List[tuple]:
+        if not self.reranker or not documents:
+            return [(doc, 1.0) for doc in documents[:top_n]]
+
+        rerank_docs = [{"id": f"doc{i}", "doc": doc.page_content[:2000]} for i, doc in enumerate(documents)]
+        result = self.reranker.rerank(query, rerank_docs, max_tokens=1024)
+
+        if not result:
+            print("[WARNING] Reranker 실패, 원본 순서 사용")
+            return [(doc, 1.0) for doc in documents[:top_n]]
+
+        reranked = []
+        for item in result.get('topPassages', [])[:top_n]:
+            try:
+                idx = int(item.get('id', '').replace('doc', ''))
+                if 0 <= idx < len(documents):
+                    reranked.append((documents[idx], float(item.get('score', 0.0))))
+            except (ValueError, IndexError):
+                continue
+
+        return reranked if reranked else [(doc, 1.0) for doc in documents[:top_n]]
+
+    # ─────────────────────────────────────────────
+    # search_recipes
+    # ─────────────────────────────────────────────
+    def search_recipes(
+        self,
+        query: str,
+        k: int = 3,
+        use_rerank: bool = False,
+        allergies: List[str] = None,
+        user_tools: List[str] = None,
+    ) -> List[Dict]:
+        t_total_start = _t()
+        use_rerank = use_rerank if use_rerank is not None else self.use_reranker
+        print(f"\n  📍 [search_recipes] 시작 (k={k}, rerank={use_rerank}) [옵션 A]")
+        if allergies:
+            print(f"  🚫 알레르기 필터: {allergies}")
+        if user_tools:
+            print(f"  🔧 도구 필터: {user_tools}")
+
+        if use_rerank and self.reranker:
+            search_k = min(k * 3, 20)
+            docs_with_scores = self._neo4j_search(query, search_k, allergies, user_tools)
+            docs = [doc for doc, _ in docs_with_scores]
+            vector_scores = {id(doc): float(score) for doc, score in docs_with_scores}
+
+            t_rerank_start = _t()
+            reranked_results = self._rerank_documents(query, docs, top_n=k)
+            _log_step("Reranker API", t_rerank_start, _t())
+
+            results = []
+            for doc, rerank_score in reranked_results:
+                results.append({
+                    "content":       doc.page_content,
+                    "vector_score":  vector_scores.get(id(doc), 0.0),
+                    "rerank_score":  float(rerank_score),
+                    "title":         doc.metadata.get("title", "N/A"),
+                    "author":        doc.metadata.get("author", "N/A"),
+                    "source":        doc.metadata.get("source", "N/A"),
+                    "cook_time":     doc.metadata.get("cook_time", "N/A"),
+                    "level":         doc.metadata.get("level", "N/A"),
+                    "recipe_id":     doc.metadata.get("recipe_id", "N/A"),
+                    "image":         doc.metadata.get("image_url", ""),
+                    "cooking_tools": doc.metadata.get("cooking_tools", []),
+                })
+        else:
+            docs_with_scores = self._neo4j_search(query, k, allergies, user_tools)
+            results = []
+            for doc, score in docs_with_scores:
+                results.append({
+                    "content":       doc.page_content,
+                    "vector_score":  float(score),
+                    "title":         doc.metadata.get("title", "N/A"),
+                    "author":        doc.metadata.get("author", "N/A"),
+                    "source":        doc.metadata.get("source", "N/A"),
+                    "cook_time":     doc.metadata.get("cook_time", "N/A"),
+                    "level":         doc.metadata.get("level", "N/A"),
+                    "recipe_id":     doc.metadata.get("recipe_id", "N/A"),
+                    "image":         doc.metadata.get("image_url", ""),
+                    "cooking_tools": doc.metadata.get("cooking_tools", []),
+                })
+
+        _log_step("search_recipes 합계", t_total_start, _t())
+        print(f"  📍 [search_recipes] 완료\n")
+        return results
+
+    # ─────────────────────────────────────────────
+    # generate_answer / generate_recipe_json / query (기존 그대로)
+    # ─────────────────────────────────────────────
+    def generate_answer(self, query: str, context_docs: List[Dict], system_prompt: Optional[str] = None) -> str:
+        print(f"  📍 [generate_answer] 시작")
+        t_total_start = _t()
+
+        if system_prompt is None:
+            system_prompt = """당신은 한국 요리 전문가이자 친절한 레시피 어시스턴트입니다.
+
+# 🚨 절대 규칙
+1. **반드시 하나의 요리만 추천하세요!**
+2. **여러 요리를 리스트로 나열하지 마세요!**
+3. **조리법은 1~2줄로 간단히!**
+
+# 필수 답변 형식
+오늘의 추천 요리는 [요리명] 입니다.
+
+**재료 (N인분, 조리시간):**
+- 주요 재료 5~7개만 간단히 나열
+
+**조리법:**
+1~2줄로 핵심만 요약
+
+**특징:**
+한 줄로 이 요리의 매력 설명
+
+{context}"""
+
+        documents = [
+            Document(
+                page_content=d.get("content", ""),
+                metadata={"title": d.get("title", "N/A"), "author": d.get("author", "N/A"), "source": d.get("source", "N/A")}
+            ) for d in context_docs
+        ]
+        prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", "{input}")])
+        chain = create_stuff_documents_chain(self.chat_model, prompt)
+
+        t_llm_start = _t()
+        try:
+            result = chain.invoke({"input": query, "context": documents})
+            _log_step("LLM 호출 (generate_answer)", t_llm_start, _t())
+            _log_step("generate_answer 합계", t_total_start, _t())
+            return result
+        except Exception as e:
+            print(f"답변 생성 오류: {e}")
+            return f"답변 생성 중 오류가 발생했습니다: {str(e)}"
+
+    def generate_recipe_json(
+        self,
+        user_message: str,
+        context_docs: List[Dict],
+        constraints_text: str = "",
+        conversation_history: str = "",
+        system_prompt: Optional[str] = None,
+    ) -> dict:
+        print(f"  📍 [generate_recipe_json] 시작")
+        t_total_start = _t()
+
+        if system_prompt is None:
+            system_prompt = """당신은 한국 요리 전문가입니다.
+
+# 역할
+주어진 레시피 데이터베이스와 **대화 히스토리**를 참고하여 사용자가 원하는 요리 레시피를 JSON 형식으로 **상세하게** 생성해주세요.
+
+# 사용자 제약사항
+{constraints_text}
+
+# 대화 히스토리 (매우 중요!)
+{conversation_history}
+
+**중요**:
+- 대화 히스토리를 꼼꼼히 읽고 사용자의 모든 요구사항을 반영하세요
+- 알레르기와 비선호 재료는 절대 사용하지 마세요
+
+# 출력 형식
+반드시 다음 JSON 형식만 출력하고, 다른 설명은 붙이지 마세요:
+{{{{
+"title": "요리 이름",
+"intro": "한 줄 소개",
+"cook_time": "예: 10~15분",
+"level": "예: 초급",
+"servings": "예: 2인분",
+"ingredients": [
+    {{{{"name": "재료명", "amount": "양", "note": "선택사항"}}}}
+],
+"steps": [
+    {{{{"no": 1, "desc": "구체적이고 상세한 설명"}}}},
+    {{{{"no": 2, "desc": "..."}}}}
+],
+}}}}
+
+{{context}}"""
+
+        formatted_system_prompt = system_prompt.format(
+            constraints_text=constraints_text if constraints_text else "없음",
+            conversation_history=conversation_history if conversation_history else "없음",
+            context="{context}"
+        )
+        documents = [
+            Document(
+                page_content=d.get("content", ""),
+                metadata={"title": d.get("title", "N/A"), "author": d.get("author", "N/A"), "source": d.get("source", "N/A")}
+            ) for d in context_docs
+        ]
+        prompt = ChatPromptTemplate.from_messages([("system", formatted_system_prompt), ("human", "{input}")])
+        chain = create_stuff_documents_chain(self.chat_model, prompt)
+
+        t_llm_start = _t()
+        try:
+            result = chain.invoke({"input": user_message, "context": documents})
+            _log_step("LLM 호출 (generate_recipe_json)", t_llm_start, _t())
+            response_text = result if isinstance(result, str) else str(result)
+        except Exception as e:
+            print(f"LLM 호출 오류: {e}")
+            return self._get_default_recipe()
+
+        try:
+            clean = response_text.strip()
+            if clean.startswith("```json"): clean = clean[7:]
+            if clean.startswith("```"):     clean = clean[3:]
+            if clean.endswith("```"):       clean = clean[:-3]
+            parsed = json.loads(clean.strip())
+            print(f"✅ 레시피 JSON 생성 성공: {parsed.get('title', 'N/A')}")
+            _log_step("generate_recipe_json 합계", t_total_start, _t())
+            return parsed
+        except json.JSONDecodeError as e:
+            print(f"JSON 파싱 오류: {e}")
+            return self._get_default_recipe()
+
+    def _get_default_recipe(self) -> dict:
+        return {
+            "title": "레시피 생성 실패",
+            "intro": "레시피를 생성하는 중 오류가 발생했습니다.",
+            "cook_time": "N/A", "level": "N/A", "servings": "N/A",
+            "ingredients": [], "steps": [],
+        }
+
+    def query(
+        self,
+        question: str,
+        top_k: int = 5,
+        use_rerank: bool = None,
+        return_references: bool = True,
+        allergies: List[str] = None,
+        user_tools: List[str] = None,
+    ) -> Dict[str, Any]:
+        print(f"\n{'='*50}")
+        print(f"  🔍 [query] 시작 [옵션 A]: \"{question[:40]}...\"")
+        print(f"{'='*50}")
+        t_query_start = _t()
+
+        retrieved_docs = self.search_recipes(
+            question, k=top_k, use_rerank=use_rerank,
+            allergies=allergies, user_tools=user_tools
+        )
+        answer = self.generate_answer(question, retrieved_docs)
+
+        result = {"question": question, "answer": answer}
+        if return_references:
+            result["references"] = retrieved_docs
+            result["num_references"] = len(retrieved_docs)
+
+        _log_step("query() 전체 합계", t_query_start, _t())
+        print(f"{'='*50}\n")
+        return result
+
+    def close(self):
+        if self.neo4j_driver:
+            self.neo4j_driver.close()

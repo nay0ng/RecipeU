@@ -5,7 +5,7 @@ FastAPI 의존성 관리
 from functools import lru_cache
 from typing import Optional
 
-from services.rag_neo4j import RecipeRAGLangChain
+from services.rag_neo4j_option_a import RecipeRAGLangChain  # [옵션 A] 2단계: Query Rewrite → Cypher
 from app.config import settings
 
 

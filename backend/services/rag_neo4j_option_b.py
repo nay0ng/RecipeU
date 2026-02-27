@@ -172,7 +172,7 @@ class RecipeRAGLangChain:
    예) "돼지고기볶음" → "돼지고기 볶음", "에어프라이기" → "에어프라이어"
 2. 제목 매칭 우선: r.title CONTAINS '키워드'
    제목 매칭 어려우면 재료명 매칭: (r)-[:CONTAINS]->(i:Ingredient) WHERE i.name CONTAINS '키워드'
-3. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{name: "재료명"}}) 조건 추가
+3. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "재료명"}}}}) 조건 추가
 4. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
 5. LIMIT {k}
 6. Cypher 쿼리만 출력 (설명/마크다운 없이)"""),

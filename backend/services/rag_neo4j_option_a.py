@@ -199,7 +199,7 @@ class RecipeRAGLangChain:
 
 ## Cypher 생성 규칙
 1. 제목 매칭 우선: r.title CONTAINS '키워드'
-2. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{name: "재료명"}}) 조건 추가
+2. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "재료명"}}}}) 조건 추가
 3. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
 4. LIMIT {k}
 5. Cypher 쿼리만 출력 (설명/마크다운 없이)"""),

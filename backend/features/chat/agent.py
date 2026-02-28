@@ -247,11 +247,17 @@ def create_chat_agent(rag_system):
     def retrieve(state: ChatAgentState) -> ChatAgentState:
         """RAG 검색 (Reranker 사용)"""
         print("[Agent] RAG 검색 중...")
-        
+
         question = state["question"]
-        
+        user_constraints = state.get("user_constraints", {})
+        allergies = user_constraints.get("allergies", []) or None
+        user_tools = user_constraints.get("cooking_tools", []) or None
+
+        if user_tools:
+            print(f"  🔧 조리도구 필터: {user_tools}")
+
         # use_rerank=None -> RAG 시스템 설정(USE_RERANKER) 따름
-        results = rag_system.search_recipes(question, k=3, use_rerank=None)
+        results = rag_system.search_recipes(question, k=3, use_rerank=None, allergies=allergies, user_tools=user_tools)
         
         documents = [
             Document(
@@ -463,9 +469,11 @@ def create_chat_agent(rag_system):
         try:
             # 제약 조건을 질문에 통합 (컨텍스트가 아닌 질문에 포함)
             enhanced_question = question
+            available_tools_str = "제한 없음"
             if user_constraints:
                 allergies = user_constraints.get("allergies", [])
                 dislikes = user_constraints.get("dislikes", [])
+                cooking_tools = user_constraints.get("cooking_tools", [])
 
                 constraints = []
                 if allergies:
@@ -475,6 +483,9 @@ def create_chat_agent(rag_system):
 
                 if constraints:
                     enhanced_question = f"{question} ({' / '.join(constraints)})"
+
+                if cooking_tools:
+                    available_tools_str = ', '.join(cooking_tools)
 
             # 인원수 계산 (선택한 가족 구성원 수)
             servings = 1  # 기본값
@@ -560,7 +571,8 @@ def create_chat_agent(rag_system):
                 "question": enhanced_question,
                 "history": formatted_history,
                 "servings": servings,
-                "modification_constraints": modification_constraints  # 수정 제약사항 추가
+                "modification_constraints": modification_constraints,
+                "available_tools": available_tools_str,
             })
             print_token_usage(_generate_response, "답변 생성")
             answer = _generate_response.content.strip()

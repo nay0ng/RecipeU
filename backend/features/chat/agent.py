@@ -447,24 +447,9 @@ def create_chat_agent(rag_system):
             for doc in documents
         ])
         
-        if constraint_warning:
-            try:
-                alt_prompt = f"""{constraint_warning}
-
-    그래도 레시피를 원하시나요? 
-    아니면 비슷한 다른 재료로 대체할까요?
-
-    답변:"""
-                
-                from langchain_core.messages import HumanMessage
-                result = rag_system.chat_model.invoke([HumanMessage(content=alt_prompt)])
-                answer = f"{constraint_warning}\n\n{result.content.strip()}"
-                
-                return {"generation": answer}
-                
-            except Exception as e:
-                print(f"   경고 생성 실패: {e}")
-                return {"generation": f"{constraint_warning}\n\n다른 요리를 추천해드릴까요?"}
+        # constraint_warning이 있어도 생성을 차단하지 않음
+        # Neo4j가 이미 DB 레벨에서 알레르기 재료를 필터링했으므로 계속 진행
+        # (경고 내용은 enhanced_question에 포함되어 LLM에게 전달됨)
         
         try:
             # 제약 조건을 질문에 통합 (컨텍스트가 아닌 질문에 포함)

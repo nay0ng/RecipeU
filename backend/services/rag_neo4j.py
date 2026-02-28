@@ -175,7 +175,7 @@ class RecipeRAGLangChain:
                        r.cooking_tools AS cooking_tools
                 LIMIT $k
             """
-            title_results = session.run(title_query, query=query, k=k)
+            title_results = session.run(title_query, {"query": query, "k": k})
             for record in title_results:
                 rid = record["recipe_id"]
                 if rid not in seen_ids:
@@ -201,7 +201,7 @@ class RecipeRAGLangChain:
                            r.cooking_tools AS cooking_tools
                     LIMIT $remaining
                 """
-                ing_results = session.run(ingredient_query, query=query, remaining=remaining)
+                ing_results = session.run(ingredient_query, {"query": query, "remaining": remaining})
                 added = 0
                 for record in ing_results:
                     rid = record["recipe_id"]

@@ -296,7 +296,7 @@ class RecipeRAGLangChain:
                 RETURN {self._REQUIRED_RETURN}
                 LIMIT $k
             """
-            for record in session.run(title_query, query=query, k=k):
+            for record in session.run(title_query, {"query": query, "k": k}):
                 rid = record["recipe_id"]
                 if rid not in seen_ids:
                     seen_ids.add(rid)
@@ -315,7 +315,7 @@ class RecipeRAGLangChain:
                     RETURN {self._REQUIRED_RETURN}
                     LIMIT $remaining
                 """
-                for record in session.run(ing_query, query=query, remaining=remaining):
+                for record in session.run(ing_query, {"query": query, "remaining": remaining}):
                     rid = record["recipe_id"]
                     if rid not in seen_ids:
                         seen_ids.add(rid)

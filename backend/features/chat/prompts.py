@@ -107,6 +107,9 @@ GENERATE_PROMPT = PromptTemplate(
 [질문]
 {question}
 
+[사용 가능한 조리도구]
+{available_tools}
+
 {modification_constraints}
 
 **출력 개수: 질문에 "여러", "많이", "추천", "N개" 없으면 무조건 1개만**
@@ -124,6 +127,7 @@ GENERATE_PROMPT = PromptTemplate(
 6. "알레르기", "비선호" 재료 사용 금지
 7. **소개: 객관적, 포멀 (금지: 이모티콘 ᄒᄒ/ᄏᄏ/:)/^^, "알려드릴게요", "~", "답니다:)")**
 8. 조리법 출력 금지
+9. **[사용 가능한 조리도구]가 "제한 없음"이 아니면, 해당 도구만으로 만들 수 있는 레시피만 제시. 목록에 없는 도구(예: 오븐, 튀김기, 가스레인지 등)가 필요한 레시피는 절대 제안 금지**
 
 **형식 (정확히 따를 것, 제목에 반드시 [ ] 포함):**
 **[요리명]**
@@ -143,5 +147,5 @@ GENERATE_PROMPT = PromptTemplate(
 "쫄깃한 면발에 시원한 육수가 별미인 냉우동 입니다."
 
 답변 (1개):""",
-    input_variables=["context", "history", "question", "servings", "modification_constraints"]
+    input_variables=["context", "history", "question", "servings", "modification_constraints", "available_tools"]
 )

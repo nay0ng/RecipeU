@@ -16,13 +16,13 @@ from features.mypage.router import router as mypage_router, init_utensils
 from features.weather.router import router as weather_router
 from features.ranking.router import router as ranking_router, load_today_ranking_cache
 from features.voice.router import router as voice_router
-from models.mysql_db import get_mysql_connection, init_all_tables
+from models.mysql_db import get_sqlite_connection, init_all_tables, seed_default_users
 
 
-def check_mysql_connection() -> bool:
-    """MySQL 연결 확인"""
+def check_sqlite_connection() -> bool:
+    """SQLite 연결 확인"""
     try:
-        conn = get_mysql_connection()
+        conn = get_sqlite_connection()
         conn.close()
         return True
     except Exception:
@@ -39,16 +39,18 @@ async def lifespan(app: FastAPI):
     if rag_system:
         print("RAG 시스템 초기화 완료")
 
-    if check_mysql_connection():
-        print("MySQL DB 연결 확인 완료")
+    if check_sqlite_connection():
+        print("SQLite DB 연결 확인 완료")
         # 모든 테이블 자동 생성
         try:
             init_all_tables()
             print("DB 테이블 자동 생성 완료")
+            seed_default_users()
+            print("기본 유저 시딩 완료 (퓨 id=1, 게스트 id=2)")
         except Exception as e:
-            print(f"DB 테이블 생성 실패: {e}")
+            print(f"DB 초기화 실패: {e}")
     else:
-        print("MySQL DB 연결 실패!")
+        print("SQLite DB 연결 실패!")
 
     init_utensils()
     
@@ -78,7 +80,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -104,5 +106,5 @@ async def health_check():
     return {
         "status": "healthy",
         "rag_available": get_rag_system() is not None,
-        "mysql_available": check_mysql_connection()
+        "sqlite_available": check_sqlite_connection()
     }

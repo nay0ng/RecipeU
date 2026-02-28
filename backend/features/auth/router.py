@@ -16,6 +16,38 @@ NAVER_TOKEN_URL = "https://nid.naver.com/oauth2.0/token"
 NAVER_PROFILE_URL = "https://openapi.naver.com/v1/nid/me"
 
 
+@router.post("/local-login")
+async def local_login(
+    nickname: str = Query(default="로컬유저"),
+    email: str = Query(default="local@recipeu.com"),
+):
+    """
+    로컬 개발용 로그인 (Naver OAuth 없이 사용).
+    nickname / email 쿼리 파라미터로 사용자 지정 가능.
+    예) POST /api/auth/local-login?nickname=홍길동&email=test@test.com
+    """
+    member_data = {
+        "naver_id": f"local_{email}",
+        "email": email,
+        "nickname": nickname,
+        "birthday": "01-01",
+        "mem_photo": "",
+        "mem_type": "LOCAL",
+    }
+    member = upsert_member(member_data)
+    return {
+        "member": {
+            "id": member["id"],
+            "nickname": member["nickname"],
+            "email": member["email"],
+            "name": member["nickname"],
+            "birthday": member.get("birthday", ""),
+            "mem_photo": member.get("mem_photo", ""),
+            "profile_image": member.get("mem_photo", None),
+        }
+    }
+
+
 @router.get("/login-url")
 async def get_naver_login_url(callback_url: str = Query(...)):
     """

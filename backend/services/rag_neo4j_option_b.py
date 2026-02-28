@@ -328,7 +328,10 @@ LIMIT 3"""),
         steps = record["steps"] or ""
         tools = record["cooking_tools"] or []
         tools_str = ", ".join(tools) if tools else ""
-        page_content = f"{title}\n{intro}\n조리도구: {tools_str}\n\n{steps}"
+        if tools_str:
+            page_content = f"{title}\n{intro}\n조리도구: {tools_str}\n\n{steps}"
+        else:
+            page_content = f"{title}\n{intro}\n\n{steps}"
         return Document(
             page_content=page_content,
             metadata={

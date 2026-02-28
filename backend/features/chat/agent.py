@@ -660,7 +660,10 @@ def create_chat_agent(rag_system):
                     for line in ingredients_section.split('\n'):
                         line = line.strip()
                         if line.startswith('**조리도구:**') or line.startswith('조리도구:'):
-                            cooking_tools_line = line
+                            # 빈 조리도구 라인은 무시 (예: "조리도구: " 처럼 내용 없는 경우)
+                            label, _, content = line.partition(':')
+                            if content.strip():
+                                cooking_tools_line = line
                             break
                         elif line and not line.startswith('**'):  # 다음 섹션 시작 전까지
                             # "- " 제거
@@ -680,6 +683,10 @@ def create_chat_agent(rag_system):
                     else:
                         cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
                     print(f"   [후처리] 재료 형식 정리됨 (조리도구: {'있음' if cooking_tools_line else '없음'})")
+
+            # 빈 조리도구 라인 제거 (LLM이 "조리도구: " 처럼 값 없이 출력한 경우)
+            cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}:\s*(?:\n|$)', '', cleaned_answer)
+            cleaned_answer = cleaned_answer.strip()
 
             # 조리도구 보완: LLM이 누락한 경우 문서 메타데이터에서 직접 추가
             if '조리도구' not in cleaned_answer and documents:

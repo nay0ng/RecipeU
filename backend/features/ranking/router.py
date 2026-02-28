@@ -8,8 +8,8 @@ from features.ranking.schemas import RecipeDetail, RecipePreview, RankingRespons
 
 router = APIRouter()
 
-# MongoDB 연결 (서버 없이 로컬 실행 시에도 앱이 기동될 수 있도록 graceful 처리)
-MONGODB_URL = os.getenv("MONGODB_URL", "")
+# MongoDB 연결 (MONGO_URI 미설정 시 랭킹 기능 비활성화로 graceful 처리)
+MONGODB_URL = os.getenv("MONGO_URI", "")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "recipe_db")
 
 client = None

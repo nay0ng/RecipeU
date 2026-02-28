@@ -295,8 +295,14 @@ async def chat_websocket(
     logger.info(f"[WS] Connected: {session_id}")
 
     if not rag_system:
-        logger.warning("[WS] RAG 시스템 없음")
-        await websocket.send_json({"type": "error", "message": "RAG 시스템을 사용할 수 없습니다."})
+        logger.error(
+            "[WS] RAG 시스템 없음 - 서버 환경변수(CLOVASTUDIO_API_KEY, NEO4J_URI 등)를 확인하세요."
+        )
+        await websocket.send_json({
+            "type": "error",
+            "message": "RAG 시스템을 사용할 수 없습니다. 서버 설정을 확인해 주세요.",
+            "detail": "CLOVASTUDIO_API_KEY 또는 NEO4J_URI 환경변수가 누락되었거나 Neo4j 연결에 실패했습니다.",
+        })
         await websocket.close()
         return
 

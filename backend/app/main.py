@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     rag_system = get_rag_system()
     if rag_system:
         print("RAG 시스템 초기화 완료")
+    else:
+        print("⚠️  RAG 시스템 초기화 실패 - 채팅 기능이 비활성화됩니다.")
+        print(f"   CLOVASTUDIO_API_KEY: {'설정됨' if settings.CLOVASTUDIO_API_KEY else '미설정 ← 확인 필요'}")
+        print(f"   NEO4J_URI:           {'설정됨' if settings.NEO4J_URI else '미설정 ← 확인 필요'}")
+        print(f"   NEO4J_USERNAME:      {'설정됨' if settings.NEO4J_USERNAME else '미설정 ← 확인 필요'}")
 
     if check_sqlite_connection():
         print("SQLite DB 연결 확인 완료")

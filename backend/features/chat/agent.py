@@ -265,7 +265,8 @@ def create_chat_agent(rag_system):
                 metadata={
                     "title": doc.get("title", ""),
                     "cook_time": doc.get("cook_time", ""),
-                    "level": doc.get("level", "")
+                    "level": doc.get("level", ""),
+                    "cooking_tools": doc.get("cooking_tools", []),
                 }
             )
             for doc in results
@@ -350,7 +351,7 @@ def create_chat_agent(rag_system):
             ])
 
             from langchain_naver import ChatClovaX
-            llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=10)
+            llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=50)
             chain = GRADE_PROMPT | llm
             _grade_response = chain.invoke({
                 "question": question,
@@ -360,13 +361,16 @@ def create_chat_agent(rag_system):
             score = _grade_response.content.strip()
 
             print(f"   평가: {score}")
-            
-            if "yes" in score.lower():
-                print("   DB 충분 → 생성")
-                return {"web_search_needed": "no"}
-            else:
+
+            # HCX-003이 max_tokens 제한 무시하고 긴 응답 반환하는 경우 대비:
+            # "no" 명시적 포함 시만 웹검색, 나머지(긴 한국어 포함)는 DB 충분으로 처리
+            # (이미 제목 키워드 매칭 통과한 상태이므로 기본값은 DB 충분)
+            if "no" in score.lower():
                 print("   DB 부족 → 웹 검색")
                 return {"web_search_needed": "yes"}
+            else:
+                print("   DB 충분 → 생성")
+                return {"web_search_needed": "no"}
                 
         except Exception as e:
             print(f"   평가 실패: {e}")

@@ -681,6 +681,14 @@ def create_chat_agent(rag_system):
                         cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
                     print(f"   [후처리] 재료 형식 정리됨 (조리도구: {'있음' if cooking_tools_line else '없음'})")
 
+            # 조리도구 보완: LLM이 누락한 경우 문서 메타데이터에서 직접 추가
+            if '조리도구' not in cleaned_answer and documents:
+                first_doc_tools = documents[0].metadata.get("cooking_tools", [])
+                if first_doc_tools:
+                    tools_str = ", ".join(first_doc_tools)
+                    cleaned_answer = f"{cleaned_answer}\n**조리도구:** {tools_str}"
+                    print(f"   [후처리] 조리도구 보완됨 (메타데이터): {tools_str}")
+
             print(f"   생성 완료: {cleaned_answer[:50]}...")
             return {"generation": cleaned_answer}
             

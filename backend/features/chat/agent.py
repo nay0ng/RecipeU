@@ -678,6 +678,20 @@ def create_chat_agent(rag_system):
                     # 쉼표로 연결
                     ingredients_text = ', '.join(ingredients_lines)
 
+                    # 알레르기 재료 필터링 (재료 단위로 검사)
+                    # LLM이 "새우살" 같은 파생어도 포함할 수 있으므로 substring 매칭
+                    allergies_list = user_constraints.get("allergies", []) if user_constraints else []
+                    if allergies_list:
+                        individual_ings = [ing.strip() for ing in ingredients_text.split(',') if ing.strip()]
+                        filtered_ings = []
+                        for ing in individual_ings:
+                            matched = [a for a in allergies_list if a in ing]
+                            if matched:
+                                print(f"   [후처리] 알레르기 재료 제거됨: '{ing}' (알레르기: {matched})")
+                            else:
+                                filtered_ings.append(ing)
+                        ingredients_text = ', '.join(filtered_ings)
+
                     # 재구성 (조리도구 섹션 유지)
                     if cooking_tools_line:
                         cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}\n{cooking_tools_line}"

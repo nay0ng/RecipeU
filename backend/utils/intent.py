@@ -112,8 +112,9 @@ def extract_allergy_dislike(text: str, chat_history: list = None) -> dict:
                     has_recipe = True
                     break
 
-    # 레시피가 있고 "빼고/제외" 같은 수정 키워드가 있으면 → RECIPE_MODIFY 의도
-    modify_keywords = ["빼고", "뺴고", "빼줘", "뺴줘", "제외", "말고", "대신"]
+    # 레시피가 있고 "빼고/제외/싫어" 같은 수정 키워드가 있으면 → RECIPE_MODIFY 의도
+    # "싫어해/싫어" 포함: 레시피 보는 중이면 해당 재료 제거 후 재생성
+    modify_keywords = ["빼고", "뺴고", "빼줘", "뺴줘", "제외", "말고", "대신", "싫어", "안먹어"]
     text_normalized = text.replace(" ", "")
 
     # 오타 허용 (ㅐ ↔ ㅏ 혼동)
@@ -519,7 +520,8 @@ def detect_chat_intent(text: str, chat_history: list = None) -> str:
             return Intent.NOT_COOKING
 
         # 레시피 수정 키워드 (명확함)
-        modify_keywords = ["말고", "대신", "바꿔", "교체", "추가", "빼고", "빼줘", "제거", "없이", "더", "덜", "없어", "없는", "없다"]
+        # "싫어해/안먹어" 포함: 레시피 보는 중이면 해당 재료 제거 후 재생성
+        modify_keywords = ["말고", "대신", "바꿔", "교체", "추가", "빼고", "빼줘", "제거", "없이", "더", "덜", "없어", "없는", "없다", "싫어", "안먹어"]
         if has_recipe and any(k in text_lower for k in modify_keywords):
             print(f"[Intent] Fallback → RECIPE_MODIFY")
             return Intent.RECIPE_MODIFY

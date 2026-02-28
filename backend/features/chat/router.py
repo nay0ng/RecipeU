@@ -787,6 +787,35 @@ async def chat_websocket(
                     logger.warning(f"[WS] 알 수 없는 confirmation 값: {confirmation}")
                     continue
 
+            elif msg_type == "save_allergy_dislike":
+                # allergy_dislike_detected 이벤트 후 사용자가 "저장" 버튼을 눌렀을 때
+                detected_type = message.get("detected_type")  # "allergy" or "dislike"
+                detected_items = message.get("detected_items", [])
+
+                logger.info(f"[WS] 알러지/비선호 저장 요청: type={detected_type}, items={detected_items}")
+
+                if detected_items and detected_type in ["allergy", "dislike"]:
+                    key = "allergies" if detected_type == "allergy" else "dislikes"
+                    current = chat_sessions[session_id]["user_constraints"].get(key, [])
+                    updated = list(set(current + detected_items))
+                    chat_sessions[session_id]["user_constraints"][key] = updated
+
+                    type_label = "알레르기" if detected_type == "allergy" else "비선호 재료"
+                    save_msg = f"{', '.join(detected_items)}을(를) {type_label}로 저장했습니다."
+                    logger.info(f"[WS] 세션 {key} 업데이트: {updated}")
+                else:
+                    save_msg = "저장할 항목이 없습니다."
+
+                chat_sessions[session_id]["messages"].append({
+                    "role": "assistant",
+                    "content": save_msg
+                })
+                await websocket.send_json({
+                    "type": "agent_message",
+                    "content": save_msg
+                })
+                continue
+
             elif msg_type == "user_message":
                 content = message.get("content", "")
 
@@ -991,6 +1020,21 @@ async def chat_websocket(
                             logger.info(f"[WS] 알레르기 차단 완료 (총 {total_sec:.1f}초)")
                             continue
 
+                    # "싫어해/안먹어" 포함 시 해당 재료를 세션 dislikes에 추가
+                    dislike_trigger_keywords = ["싫어", "안먹어"]
+                    if any(k in content for k in dislike_trigger_keywords):
+                        try:
+                            from utils.intent import extract_allergy_dislike
+                            dislike_data = extract_allergy_dislike(content, chat_history=None)
+                            if dislike_data.get("type") == "dislike" and dislike_data.get("items"):
+                                new_dislikes = dislike_data["items"]
+                                current_dislikes = chat_sessions[session_id]["user_constraints"].get("dislikes", [])
+                                updated_dislikes = list(set(current_dislikes + new_dislikes))
+                                chat_sessions[session_id]["user_constraints"]["dislikes"] = updated_dislikes
+                                logger.info(f"[WS] 싫어하는 재료 세션에 추가: {new_dislikes} → 전체: {updated_dislikes}")
+                        except Exception as e:
+                            logger.warning(f"[WS] 싫어하는 재료 세션 업데이트 실패: {e}")
+
                     modification_success = await handle_recipe_modification(
                         websocket,
                         chat_sessions[session_id],
@@ -1071,27 +1115,24 @@ async def chat_websocket(
                     # 임시 허용된 비선호는 제외
                     matched_dislikes = [item for item in user_dislikes if item in content and item not in temp_allowed]
 
-                    # 알러지 재료 포함 → 무조건 차단
+                    # 알러지 재료 포함 → 안내 메시지 후 제외하고 계속 진행
                     if matched_allergies:
-                        allergy_block_msg = f"알러지 재료({', '.join(matched_allergies)})가 포함되어 있어 레시피를 생성할 수 없습니다. 다른 레시피를 검색해주세요."
+                        allergy_notice_msg = f"{', '.join(matched_allergies)} 알레르기가 있어 해당 재료를 제외하고 찾아드릴게요."
 
-                        logger.info(f"[WS] 알러지 재료 감지 → 생성 차단: {matched_allergies}")
+                        logger.info(f"[WS] 알러지 재료 감지 → 제외하고 계속: {matched_allergies}")
 
-                        # 히스토리에 차단 메시지 추가
+                        # 히스토리에 안내 메시지 추가
                         chat_sessions[session_id]["messages"].append({
                             "role": "assistant",
-                            "content": allergy_block_msg
+                            "content": allergy_notice_msg
                         })
 
-                        # WebSocket으로 차단 메시지 전송 (버튼 없음)
+                        # WebSocket으로 안내 메시지 전송
                         await websocket.send_json({
                             "type": "agent_message",
-                            "content": allergy_block_msg
+                            "content": allergy_notice_msg
                         })
-
-                        total_sec = (time.time() - start_time)
-                        logger.info(f"[WS] 알러지 재료 차단 완료 (총 {total_sec:.1f}초)")
-                        continue
+                        # 차단하지 않고 아래로 계속 진행 (레시피 검색 단계로 fall-through)
 
                     # 비선호 음식만 포함 → 확인 요청
                     if matched_dislikes:

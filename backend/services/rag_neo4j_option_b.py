@@ -176,6 +176,9 @@ class RecipeRAGLangChain:
 4. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
 5. LIMIT {k}
 6. Cypher 쿼리만 출력 (설명/마크다운 없이)
+   [중요] ANY()/ALL() 사용 시 선언한 변수명과 사용하는 변수명 반드시 동일하게 작성
+   올바른 예: ANY(x IN list WHERE x = value) ← x로 통일
+   잘못된 예: ANY(ingred IN list WHERE ingr = value) ← ingred/ingr 불일치 (SyntaxError 발생)
 7. [중요] 요청 요리명에 알레르기 재료가 포함된 경우(예: 요청="새우볶음밥", 알레르기=["새우"]):
    - 해당 알레르기 재료를 제외하고 상위 카테고리 키워드로 검색
    - 예: "새우볶음밥" → "볶음밥"으로 CONTAINS 검색 + 새우 알레르기 필터

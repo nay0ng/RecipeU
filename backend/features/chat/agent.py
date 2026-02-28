@@ -246,19 +246,26 @@ def create_chat_agent(rag_system):
     def retrieve(state: ChatAgentState) -> ChatAgentState:
         """RAG 검색 (Reranker 사용)"""
         print("[Agent] RAG 검색 중...")
-        
+
         question = state["question"]
-        
+        user_constraints = state.get("user_constraints", {})
+        allergies = user_constraints.get("allergies", []) or None
+        user_tools = user_constraints.get("cooking_tools", []) or None
+
+        if user_tools:
+            print(f"  🔧 조리도구 필터: {user_tools}")
+
         # use_rerank=None -> RAG 시스템 설정(USE_RERANKER) 따름
-        results = rag_system.search_recipes(question, k=3, use_rerank=None)
-        
+        results = rag_system.search_recipes(question, k=3, use_rerank=None, allergies=allergies, user_tools=user_tools)
+
         documents = [
             Document(
                 page_content=doc.get("content", ""),
                 metadata={
                     "title": doc.get("title", ""),
                     "cook_time": doc.get("cook_time", ""),
-                    "level": doc.get("level", "")
+                    "level": doc.get("level", ""),
+                    "cooking_tools": doc.get("cooking_tools", []),
                 }
             )
             for doc in results
@@ -336,30 +343,11 @@ def create_chat_agent(rag_system):
             if not found_exact_match:
                 print("   제목 매칭 실패 → 웹 검색")
                 return {"web_search_needed": "yes"}
-            
-            context_text = "\n".join([
-                f"- {doc.page_content[:200]}"
-                for doc in documents[:3]
-            ])
 
-            from langchain_naver import ChatClovaX
-            llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=10)
-            chain = GRADE_PROMPT | llm | StrOutputParser()
-            score = chain.invoke({
-                "question": question,
-                "context": context_text
-            })
-
-            print_token_usage(score, "관련성 평가")
-            
-            print(f"   평가: {score}")
-            
-            if "yes" in score.lower():
-                print("   DB 충분 → 생성")
-                return {"web_search_needed": "no"}
-            else:
-                print("   DB 부족 → 웹 검색")
-                return {"web_search_needed": "yes"}
+            # 규칙 기반에서 이미 매칭 확인 → LLM 호출 없이 DB 충분으로 판단
+            # (HCX-003이 yes/no 외 긴 응답 반환 시 오판 방지)
+            print("   DB 충분 → 생성")
+            return {"web_search_needed": "no"}
                 
         except Exception as e:
             print(f"   평가 실패: {e}")
@@ -435,10 +423,16 @@ def create_chat_agent(rag_system):
         formatted_history = "\n".join(history[-10:]) if isinstance(history, list) else str(history)
 
         # 웹 검색 결과는 이미 요약되어 있으므로 전체 사용, DB 검색 결과는 800자로 제한
-        context_text = "\n\n".join([
-            doc.page_content if len(doc.page_content) < 1000 else doc.page_content[:800]
-            for doc in documents
-        ])
+        # cooking_tools 메타데이터를 컨텍스트에 포함 → LLM이 도구 제약 인식 가능
+        def _doc_to_context(doc):
+            content = doc.page_content if len(doc.page_content) < 1000 else doc.page_content[:800]
+            tools = doc.metadata.get("cooking_tools")
+            if tools:
+                tools_str = ", ".join(tools) if isinstance(tools, list) else str(tools)
+                return f"[필요 조리도구: {tools_str}]\n{content}"
+            return content
+
+        context_text = "\n\n".join([_doc_to_context(doc) for doc in documents])
         
         if constraint_warning:
             try:
@@ -462,9 +456,11 @@ def create_chat_agent(rag_system):
         try:
             # 제약 조건을 질문에 통합 (컨텍스트가 아닌 질문에 포함)
             enhanced_question = question
+            available_tools_str = "제한 없음"
             if user_constraints:
                 allergies = user_constraints.get("allergies", [])
                 dislikes = user_constraints.get("dislikes", [])
+                cooking_tools = user_constraints.get("cooking_tools", [])
 
                 constraints = []
                 if allergies:
@@ -474,6 +470,9 @@ def create_chat_agent(rag_system):
 
                 if constraints:
                     enhanced_question = f"{question} ({' / '.join(constraints)})"
+
+                if cooking_tools:
+                    available_tools_str = ', '.join(cooking_tools)
 
             # 인원수 계산 (선택한 가족 구성원 수)
             servings = 1  # 기본값
@@ -559,7 +558,8 @@ def create_chat_agent(rag_system):
                 "question": enhanced_question,
                 "history": formatted_history,
                 "servings": servings,
-                "modification_constraints": modification_constraints  # 수정 제약사항 추가
+                "modification_constraints": modification_constraints,
+                "available_tools": available_tools_str,
             })
 
             print_token_usage(answer, "답변 생성")

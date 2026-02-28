@@ -171,18 +171,40 @@ class RecipeRAGLangChain:
 1. 오타/구어체를 표준 한국어 요리명/재료명으로 자동 보정하여 검색
    예) "돼지고기볶음" → "돼지고기 볶음", "에어프라이기" → "에어프라이어"
 2. 제목 매칭: 반드시 r.title CONTAINS '키워드' 사용 (exact match 절대 금지)
-   제목 매칭 어려우면 재료명 매칭: (r)-[:CONTAINS]->(i:Ingredient) WHERE i.name CONTAINS '키워드'
+   제목 매칭 어려우면 재료명 매칭: MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient) WHERE i.name CONTAINS '키워드'
 3. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "재료명"}}}}) 조건 추가
 4. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
 5. LIMIT {k}
-6. Cypher 쿼리만 출력 (설명/마크다운 없이)
+6. Cypher 쿼리만 출력 (설명/마크다운/코드블록 없이, SELECT/WITH AS 같은 SQL 문법 절대 금지)
    [중요] ANY()/ALL() 사용 시 선언한 변수명과 사용하는 변수명 반드시 동일하게 작성
-   올바른 예: ANY(x IN list WHERE x = value) ← x로 통일
-   잘못된 예: ANY(ingred IN list WHERE ingr = value) ← ingred/ingr 불일치 (SyntaxError 발생)
+   올바른 예: ALL(t IN r.cooking_tools WHERE t IN ["에어프라이어"]) ← t로 통일
+   잘못된 예: ALL(tool IN r.cooking_tools WHERE t IN [...]) ← tool/t 불일치 (SyntaxError 발생)
 7. [중요] 요청 요리명에 알레르기 재료가 포함된 경우(예: 요청="새우볶음밥", 알레르기=["새우"]):
    - 해당 알레르기 재료를 제외하고 상위 카테고리 키워드로 검색
    - 예: "새우볶음밥" → "볶음밥"으로 CONTAINS 검색 + 새우 알레르기 필터
-   - 알레르기 재료명이 포함된 요리명(예: '새우볶음밥')으로 title CONTAINS 절대 사용 금지"""),
+   - 알레르기 재료명이 포함된 요리명(예: '새우볶음밥')으로 title CONTAINS 절대 사용 금지
+
+## 올바른 Cypher 예시 (이 형식만 사용)
+예시1 - 제목 검색 + 알레르기 필터 + 도구 필터:
+MATCH (r:Recipe)
+WHERE r.title CONTAINS '볶음밥'
+  AND NOT (r)-[:CONTAINS]->(:Ingredient {{name: "새우"}})
+  AND ALL(t IN r.cooking_tools WHERE t IN ["밥솥", "전자레인지"])
+RETURN r.id AS recipe_id, r.title AS title, r.intro AS intro,
+       r.cook_time AS cook_time, r.level AS level, r.author AS author,
+       r.detail_url AS source, r.image AS image, r.steps AS steps,
+       r.cooking_tools AS cooking_tools
+LIMIT 3
+
+예시2 - 재료명 검색:
+MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)
+WHERE i.name CONTAINS '두부'
+  AND ALL(t IN r.cooking_tools WHERE t IN ["에어프라이어"])
+RETURN r.id AS recipe_id, r.title AS title, r.intro AS intro,
+       r.cook_time AS cook_time, r.level AS level, r.author AS author,
+       r.detail_url AS source, r.image AS image, r.steps AS steps,
+       r.cooking_tools AS cooking_tools
+LIMIT 3"""),
             ("human", "사용자 입력: {query}")
         ])
 

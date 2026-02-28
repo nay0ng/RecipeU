@@ -170,12 +170,16 @@ class RecipeRAGLangChain:
 ## Cypher 생성 규칙
 1. 오타/구어체를 표준 한국어 요리명/재료명으로 자동 보정하여 검색
    예) "돼지고기볶음" → "돼지고기 볶음", "에어프라이기" → "에어프라이어"
-2. 제목 매칭 우선: r.title CONTAINS '키워드'
+2. 제목 매칭: 반드시 r.title CONTAINS '키워드' 사용 (exact match 절대 금지)
    제목 매칭 어려우면 재료명 매칭: (r)-[:CONTAINS]->(i:Ingredient) WHERE i.name CONTAINS '키워드'
 3. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "재료명"}}}}) 조건 추가
 4. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
 5. LIMIT {k}
-6. Cypher 쿼리만 출력 (설명/마크다운 없이)"""),
+6. Cypher 쿼리만 출력 (설명/마크다운 없이)
+7. [중요] 요청 요리명에 알레르기 재료가 포함된 경우(예: 요청="새우볶음밥", 알레르기=["새우"]):
+   - 해당 알레르기 재료를 제외하고 상위 카테고리 키워드로 검색
+   - 예: "새우볶음밥" → "볶음밥"으로 CONTAINS 검색 + 새우 알레르기 필터
+   - 알레르기 재료명이 포함된 요리명(예: '새우볶음밥')으로 title CONTAINS 절대 사용 금지"""),
             ("human", "사용자 입력: {query}")
         ])
 

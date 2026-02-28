@@ -596,11 +596,12 @@ def create_chat_agent(rag_system):
             for pattern in allergy_patterns:
                 cleaned_answer = re.sub(pattern, '', cleaned_answer, flags=re.IGNORECASE)
 
-            # 볼드 없는 형식을 볼드 형식으로 통일 (웹 검색 결과 대응)
-            if '소개:' in cleaned_answer and '**소개:**' not in cleaned_answer:
-                cleaned_answer = re.sub(r'(?<!\*)소개:\s*', '**소개:** ', cleaned_answer, count=1)
-            if '재료:' in cleaned_answer and '**재료:**' not in cleaned_answer:
-                cleaned_answer = re.sub(r'(?<!\*)재료:\s*', '**재료:** ', cleaned_answer, count=1)
+            # 볼드 없는 형식을 볼드 형식으로 통일
+            # LLM이 "소개 :", "재료 :" 처럼 공백+콜론 형식으로 출력하는 경우도 처리
+            if re.search(r'소개\s*:', cleaned_answer) and '**소개:**' not in cleaned_answer:
+                cleaned_answer = re.sub(r'(?<!\*)소개\s*:\s*', '**소개:** ', cleaned_answer, count=1)
+            if re.search(r'재료\s*:', cleaned_answer) and '**재료:**' not in cleaned_answer:
+                cleaned_answer = re.sub(r'(?<!\*)재료\s*:\s*', '**재료:** ', cleaned_answer, count=1)
 
             # 소개 문구 정제: 이모티콘, 캐주얼 표현 제거
             if '**소개:**' in cleaned_answer:
@@ -659,10 +660,10 @@ def create_chat_agent(rag_system):
                     cooking_tools_line = ""  # 조리도구 섹션 보존
                     for line in ingredients_section.split('\n'):
                         line = line.strip()
-                        if line.startswith('**조리도구:**') or line.startswith('조리도구:'):
+                        if re.match(r'\*{0,2}조리도구\*{0,2}\s*:', line):
                             # 빈 조리도구 라인은 무시 (예: "조리도구: " 처럼 내용 없는 경우)
-                            label, _, content = line.partition(':')
-                            if content.strip():
+                            content = re.split(r'\s*:\s*', line, maxsplit=1)
+                            if len(content) > 1 and content[1].strip():
                                 cooking_tools_line = line
                             break
                         elif line and not line.startswith('**'):  # 다음 섹션 시작 전까지
@@ -684,15 +685,29 @@ def create_chat_agent(rag_system):
                         cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
                     print(f"   [후처리] 재료 형식 정리됨 (조리도구: {'있음' if cooking_tools_line else '없음'})")
 
-            # 빈 조리도구 라인 제거 (LLM이 "조리도구: " 처럼 값 없이 출력한 경우)
-            cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}:\s*(?:\n|$)', '', cleaned_answer)
-            cleaned_answer = cleaned_answer.strip()
+            # 문서 메타데이터에서 실제 조리도구 목록 수집
+            # (DB 문서는 Neo4j에서, 웹 검색 문서는 cooking_tools 없음)
+            doc_tools = []
+            for doc in documents:
+                tools = doc.metadata.get("cooking_tools", [])
+                if tools:
+                    doc_tools = tools
+                    break  # 첫 번째 유효한 도구 목록 사용
 
-            # 조리도구 보완: LLM이 누락한 경우 문서 메타데이터에서 직접 추가
-            if '조리도구' not in cleaned_answer and documents:
-                first_doc_tools = documents[0].metadata.get("cooking_tools", [])
-                if first_doc_tools:
-                    tools_str = ", ".join(first_doc_tools)
+            if '조리도구' in cleaned_answer:
+                if not doc_tools:
+                    # 메타데이터에 조리도구 없음 → LLM이 임의로 넣은 것 → 제거
+                    cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}\s*:.*?(?=\n|$)', '', cleaned_answer, flags=re.MULTILINE)
+                    cleaned_answer = cleaned_answer.strip()
+                    print(f"   [후처리] 조리도구 제거됨 (메타데이터 없음 - LLM 환각)")
+                else:
+                    # 빈 조리도구 라인만 제거 (값 있는 경우 유지)
+                    cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}\s*:\s*(?:\n|$)', '', cleaned_answer)
+                    cleaned_answer = cleaned_answer.strip()
+            else:
+                # 조리도구 누락 시 메타데이터에서 보완
+                if doc_tools:
+                    tools_str = ", ".join(doc_tools)
                     cleaned_answer = f"{cleaned_answer}\n**조리도구:** {tools_str}"
                     print(f"   [후처리] 조리도구 보완됨 (메타데이터): {tools_str}")
 

@@ -329,14 +329,15 @@ def create_chat_agent(rag_system):
         
         try:
             question_lower = question.lower()
-            
+            STOPWORDS = {"만들기", "레시피", "방법", "하는법", "요리"}
+
             found_exact_match = False
             for doc in documents[:3]:
                 title = doc.metadata.get("title", "").lower()
                 if question_lower in title or any(
-                    word in title 
-                    for word in question_lower.split() 
-                    if len(word) > 1
+                    word in title
+                    for word in question_lower.split()
+                    if len(word) > 1 and word not in STOPWORDS
                 ):
                     found_exact_match = True
                     break

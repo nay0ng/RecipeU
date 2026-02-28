@@ -188,7 +188,7 @@ class RecipeRAGLangChain:
 예시1 - 제목 검색 + 알레르기 필터 + 도구 필터:
 MATCH (r:Recipe)
 WHERE r.title CONTAINS '볶음밥'
-  AND NOT (r)-[:CONTAINS]->(:Ingredient {{name: "새우"}})
+  AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "새우"}}}})
   AND ALL(t IN r.cooking_tools WHERE t IN ["밥솥", "전자레인지"])
 RETURN r.id AS recipe_id, r.title AS title, r.intro AS intro,
        r.cook_time AS cook_time, r.level AS level, r.author AS author,

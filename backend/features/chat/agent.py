@@ -216,12 +216,13 @@ def create_chat_agent(rag_system):
         try:
             from langchain_naver import ChatClovaX
             llm = ChatClovaX(model="HCX-DASH-001", temperature=0.2, max_tokens=50)
-            chain = REWRITE_PROMPT | llm | StrOutputParser()
-            better_question = chain.invoke({
+            chain = REWRITE_PROMPT | llm
+            _rewrite_response = chain.invoke({
                 "history": formatted_history,
                 "question": question
             })
-            print_token_usage(better_question, "쿼리 재작성")
+            print_token_usage(_rewrite_response, "쿼리 재작성")
+            better_question = _rewrite_response.content.strip()
 
             print(f"   원본: {question}")
             print(f"   재작성: {better_question}")
@@ -344,14 +345,14 @@ def create_chat_agent(rag_system):
 
             from langchain_naver import ChatClovaX
             llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=10)
-            chain = GRADE_PROMPT | llm | StrOutputParser()
-            score = chain.invoke({
+            chain = GRADE_PROMPT | llm
+            _grade_response = chain.invoke({
                 "question": question,
                 "context": context_text
             })
+            print_token_usage(_grade_response, "관련성 평가")
+            score = _grade_response.content.strip()
 
-            print_token_usage(score, "관련성 평가")
-            
             print(f"   평가: {score}")
             
             if "yes" in score.lower():
@@ -553,16 +554,16 @@ def create_chat_agent(rag_system):
             # max_tokens 명시적 설정 (토큰 절약)
             from langchain_naver import ChatClovaX
             llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=1000)
-            chain = GENERATE_PROMPT | llm | StrOutputParser()
-            answer = chain.invoke({
+            chain = GENERATE_PROMPT | llm
+            _generate_response = chain.invoke({
                 "context": context_text,
                 "question": enhanced_question,
                 "history": formatted_history,
                 "servings": servings,
                 "modification_constraints": modification_constraints  # 수정 제약사항 추가
             })
-
-            print_token_usage(answer, "답변 생성")
+            print_token_usage(_generate_response, "답변 생성")
+            answer = _generate_response.content.strip()
             print(f"\n[DEBUG] LLM 원본 응답:\n{answer}\n[/DEBUG]\n")
 
             # 후처리: 조리법 제거 (채팅용, 재료만 출력)

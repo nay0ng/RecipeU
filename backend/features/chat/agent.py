@@ -216,12 +216,13 @@ def create_chat_agent(rag_system):
         try:
             from langchain_naver import ChatClovaX
             llm = ChatClovaX(model="HCX-DASH-001", temperature=0.2, max_tokens=50)
-            chain = REWRITE_PROMPT | llm | StrOutputParser()
-            better_question = chain.invoke({
+            chain = REWRITE_PROMPT | llm
+            _rewrite_response = chain.invoke({
                 "history": formatted_history,
                 "question": question
             })
-            print_token_usage(better_question, "쿼리 재작성")
+            print_token_usage(_rewrite_response, "쿼리 재작성")
+            better_question = _rewrite_response.content.strip()
 
             print(f"   원본: {question}")
             print(f"   재작성: {better_question}")
@@ -246,11 +247,17 @@ def create_chat_agent(rag_system):
     def retrieve(state: ChatAgentState) -> ChatAgentState:
         """RAG 검색 (Reranker 사용)"""
         print("[Agent] RAG 검색 중...")
-        
+
         question = state["question"]
-        
+        user_constraints = state.get("user_constraints", {})
+        allergies = user_constraints.get("allergies", []) or None
+        user_tools = user_constraints.get("cooking_tools", []) or None
+
+        if user_tools:
+            print(f"  🔧 조리도구 필터: {user_tools}")
+
         # use_rerank=None -> RAG 시스템 설정(USE_RERANKER) 따름
-        results = rag_system.search_recipes(question, k=3, use_rerank=None)
+        results = rag_system.search_recipes(question, k=3, use_rerank=None, allergies=allergies, user_tools=user_tools)
         
         documents = [
             Document(
@@ -344,14 +351,14 @@ def create_chat_agent(rag_system):
 
             from langchain_naver import ChatClovaX
             llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=10)
-            chain = GRADE_PROMPT | llm | StrOutputParser()
-            score = chain.invoke({
+            chain = GRADE_PROMPT | llm
+            _grade_response = chain.invoke({
                 "question": question,
                 "context": context_text
             })
+            print_token_usage(_grade_response, "관련성 평가")
+            score = _grade_response.content.strip()
 
-            print_token_usage(score, "관련성 평가")
-            
             print(f"   평가: {score}")
             
             if "yes" in score.lower():
@@ -440,31 +447,18 @@ def create_chat_agent(rag_system):
             for doc in documents
         ])
         
-        if constraint_warning:
-            try:
-                alt_prompt = f"""{constraint_warning}
-
-    그래도 레시피를 원하시나요? 
-    아니면 비슷한 다른 재료로 대체할까요?
-
-    답변:"""
-                
-                from langchain_core.messages import HumanMessage
-                result = rag_system.chat_model.invoke([HumanMessage(content=alt_prompt)])
-                answer = f"{constraint_warning}\n\n{result.content.strip()}"
-                
-                return {"generation": answer}
-                
-            except Exception as e:
-                print(f"   경고 생성 실패: {e}")
-                return {"generation": f"{constraint_warning}\n\n다른 요리를 추천해드릴까요?"}
+        # constraint_warning이 있어도 생성을 차단하지 않음
+        # Neo4j가 이미 DB 레벨에서 알레르기 재료를 필터링했으므로 계속 진행
+        # (경고 내용은 enhanced_question에 포함되어 LLM에게 전달됨)
         
         try:
             # 제약 조건을 질문에 통합 (컨텍스트가 아닌 질문에 포함)
             enhanced_question = question
+            available_tools_str = "제한 없음"
             if user_constraints:
                 allergies = user_constraints.get("allergies", [])
                 dislikes = user_constraints.get("dislikes", [])
+                cooking_tools = user_constraints.get("cooking_tools", [])
 
                 constraints = []
                 if allergies:
@@ -474,6 +468,9 @@ def create_chat_agent(rag_system):
 
                 if constraints:
                     enhanced_question = f"{question} ({' / '.join(constraints)})"
+
+                if cooking_tools:
+                    available_tools_str = ', '.join(cooking_tools)
 
             # 인원수 계산 (선택한 가족 구성원 수)
             servings = 1  # 기본값
@@ -553,16 +550,17 @@ def create_chat_agent(rag_system):
             # max_tokens 명시적 설정 (토큰 절약)
             from langchain_naver import ChatClovaX
             llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=1000)
-            chain = GENERATE_PROMPT | llm | StrOutputParser()
-            answer = chain.invoke({
+            chain = GENERATE_PROMPT | llm
+            _generate_response = chain.invoke({
                 "context": context_text,
                 "question": enhanced_question,
                 "history": formatted_history,
                 "servings": servings,
-                "modification_constraints": modification_constraints  # 수정 제약사항 추가
+                "modification_constraints": modification_constraints,
+                "available_tools": available_tools_str,
             })
-
-            print_token_usage(answer, "답변 생성")
+            print_token_usage(_generate_response, "답변 생성")
+            answer = _generate_response.content.strip()
             print(f"\n[DEBUG] LLM 원본 응답:\n{answer}\n[/DEBUG]\n")
 
             # 후처리: 조리법 제거 (채팅용, 재료만 출력)

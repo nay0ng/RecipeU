@@ -44,19 +44,15 @@ class Settings(BaseSettings):
     # Serper.dev (웹 검색)
     SERPER_API_KEY: Optional[str] = None
     
-    # Milvus
-    MILVUS_HOST: str = ""
-    MILVUS_PORT: str = "19530"
-    COLLECTION_NAME: str = "recipe_docs"
+    # Neo4j (Graph RAG)
+    NEO4J_URI: str = ""
+    NEO4J_USERNAME: str = ""
+    NEO4J_PASSWORD: str = ""
 
     USE_RERANKER: bool = False
 
-    # MySQL (Naver Cloud)
-    MYSQL_HOST: str = ""
-    MYSQL_PORT: int = 3306
-    MYSQL_USER: str = ""
-    MYSQL_PASSWORD: str = ""
-    MYSQL_DATABASE: str = ""
+    # SQLite (로컬 DB)
+    SQLITE_PATH: str = "./recipeu.db"
     
     class Config:
         env_file = ".env"

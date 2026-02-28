@@ -1,0 +1,25 @@
+---
+title: RecipeU Chat Agent (Option B)
+---
+flowchart TD
+    __start__(["&nbsp;&nbsp;START&nbsp;&nbsp;"]):::startclass
+    rewrite["🔄 rewrite\n쿼리 재작성\n(요리명 키워드 추출)"]
+    retrieve["🔍 retrieve\nNeo4j 검색\n(알레르기·조리도구 필터)"]
+    check_constraints["⚠️ check_constraints\n제약 조건 체크\n(알레르기·비선호 감지)"]
+    grade["📊 grade\n관련성 평가\n(문서 품질 확인)"]
+    web_search["🌐 web_search\n웹 검색\n(DB 미스 시 폴백)"]
+    generate["✍️ generate\n답변 생성\n(레시피 출력)"]
+    __end__(["&nbsp;&nbsp;END&nbsp;&nbsp;"]):::endclass
+
+    __start__ --> rewrite
+    rewrite --> retrieve
+    retrieve --> check_constraints
+    check_constraints --> grade
+    grade -->|"문서 있음"| generate
+    grade -->|"문서 없음"| web_search
+    web_search --> generate
+    generate --> __end__
+
+    classDef startclass fill:#2d6a4f,color:#fff,stroke:none
+    classDef endclass fill:#1b4332,color:#fff,stroke:none
+    classDef default fill:#f8f9fa,stroke:#adb5bd,color:#212529,rx:8

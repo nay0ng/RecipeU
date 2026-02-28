@@ -5,7 +5,7 @@ FastAPI 의존성 관리
 from functools import lru_cache
 from typing import Optional
 
-from services.rag import RecipeRAGLangChain
+from services.rag_neo4j_option_b import RecipeRAGLangChain  # [옵션 B] 1단계: Direct Cypher
 from app.config import settings
 
 
@@ -25,9 +25,6 @@ def get_rag_system() -> Optional[RecipeRAGLangChain]:
 
         try:
             _rag_system = RecipeRAGLangChain(
-                milvus_host=settings.MILVUS_HOST,
-                milvus_port=settings.MILVUS_PORT,
-                collection_name=settings.COLLECTION_NAME,
                 use_reranker=settings.USE_RERANKER,
                 temperature=0.2,
                 max_tokens=2000,

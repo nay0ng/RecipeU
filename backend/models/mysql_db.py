@@ -1,18 +1,18 @@
 # backend/models/mysql_db.py
 """
-MySQL 연결 관리 - 전체 테이블 CRUD
+SQLite 연결 관리 - 전체 테이블 CRUD (MySQL → SQLite 마이그레이션)
 Tables: member, family, personalization, utensil, member_utensil,
         session, chatbot, generate, my_recipe, voice
 """
 import json
 import logging
-import pymysql
+import sqlite3
 from contextlib import contextmanager
 from typing import Optional, List
 from app.config import settings
 
 # 로거 설정
-logger = logging.getLogger("mysql_db")
+logger = logging.getLogger("sqlite_db")
 logger.setLevel(logging.DEBUG)
 
 # 콘솔 핸들러 (컬러 로그)
@@ -20,30 +20,37 @@ if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
-        "\033[36m[MySQL]\033[0m %(asctime)s - %(levelname)s - %(message)s",
+        "\033[36m[SQLite]\033[0m %(asctime)s - %(levelname)s - %(message)s",
         datefmt="%H:%M:%S"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
 
+def _dict_factory(cursor, row):
+    """sqlite3 Row를 dict로 변환하는 팩토리"""
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
+
+def get_sqlite_connection():
+    """SQLite 커넥션 생성"""
+    db_path = settings.SQLITE_PATH
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = _dict_factory
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
 def get_mysql_connection():
-    """MySQL 커넥션 생성"""
-    return pymysql.connect(
-        host=settings.MYSQL_HOST,
-        port=settings.MYSQL_PORT,
-        user=settings.MYSQL_USER,
-        password=settings.MYSQL_PASSWORD,
-        database=settings.MYSQL_DATABASE,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-    )
+    """하위 호환성을 위한 별칭"""
+    return get_sqlite_connection()
 
 
 @contextmanager
 def mysql_cursor():
-    """MySQL 커서 컨텍스트 매니저"""
-    conn = get_mysql_connection()
+    """SQLite 커서 컨텍스트 매니저"""
+    conn = get_sqlite_connection()
     try:
         cursor = conn.cursor()
         yield cursor
@@ -63,196 +70,176 @@ def init_all_tables():
         # 1. member 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS member (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '회원고유번호(내부 PK)',
-                naver_id VARCHAR(255) NOT NULL COMMENT '네이버 response/id (앱 단위 유니크)',
-                email VARCHAR(255) NOT NULL COMMENT '이메일',
-                nickname VARCHAR(50) NOT NULL COMMENT '별명',
-                birthday CHAR(5) NOT NULL COMMENT '생일(MM-DD)',
-                mem_photo VARCHAR(2048) NOT NULL COMMENT '프로필 사진 URL',
-                mem_type VARCHAR(20) DEFAULT NULL COMMENT '회원 종류',
-                to_cnt BIGINT NOT NULL DEFAULT 0 COMMENT '총 방문 수',
-                first_visit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '가입일',
-                last_visit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '마지막 방문일(로그인 성공 시 갱신)',
-                member_del TINYINT(1) NOT NULL DEFAULT 0 COMMENT '탈퇴 유무',
-                UNIQUE KEY uk_member_naver_id (naver_id),
-                UNIQUE KEY uk_member_email (email),
-                INDEX idx_member_last_visit (last_visit)
-            ) COMMENT='회원 정보'
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                naver_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                nickname TEXT NOT NULL,
+                birthday TEXT NOT NULL,
+                mem_photo TEXT NOT NULL,
+                mem_type TEXT DEFAULT NULL,
+                to_cnt INTEGER NOT NULL DEFAULT 0,
+                first_visit TEXT NOT NULL DEFAULT (datetime('now')),
+                last_visit TEXT NOT NULL DEFAULT (datetime('now')),
+                member_del INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (naver_id),
+                UNIQUE (email)
+            )
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_member_last_visit ON member(last_visit)")
 
         # 2. family 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS family (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                member_id BIGINT NOT NULL,
-                relationship VARCHAR(20) NOT NULL DEFAULT '',
-                INDEX idx_family_member_id (member_id),
-                CONSTRAINT fk_family_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id INTEGER NOT NULL,
+                relationship TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_family_member_id ON family(member_id)")
 
         # 3. personalization 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personalization (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                family_id BIGINT DEFAULT NULL,
-                member_id BIGINT NOT NULL,
-                scope ENUM('MEMBER', 'FAMILY') NOT NULL,
-                allergies JSON DEFAULT NULL,
-                dislikes JSON DEFAULT NULL,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_p_member_id (member_id),
-                INDEX idx_p_family_id (family_id),
-                CONSTRAINT fk_p_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
-                CONSTRAINT fk_p_family FOREIGN KEY (family_id)
-                    REFERENCES family(id) ON DELETE CASCADE ON UPDATE CASCADE
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                family_id INTEGER DEFAULT NULL,
+                member_id INTEGER NOT NULL,
+                scope TEXT NOT NULL CHECK(scope IN ('MEMBER', 'FAMILY')),
+                allergies TEXT DEFAULT NULL,
+                dislikes TEXT DEFAULT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (family_id) REFERENCES family(id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_p_member_id ON personalization(member_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_p_family_id ON personalization(family_id)")
 
         # 4. utensil 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS utensil (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(50) NOT NULL,
-                UNIQUE KEY uk_utensil_name (name)
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
             )
         """)
 
         # 5. member_utensil 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS member_utensil (
-                id BIGINT NOT NULL AUTO_INCREMENT,
-                member_id BIGINT NOT NULL,
-                utensil_id INT NOT NULL,
-                PRIMARY KEY (id),
-                UNIQUE KEY uk_member_utensil (member_id, utensil_id),
-                KEY idx_mu_member_id (member_id),
-                KEY idx_mu_utensil_id (utensil_id),
-                CONSTRAINT fk_mu_member FOREIGN KEY (member_id)
-                    REFERENCES member (id) ON DELETE CASCADE ON UPDATE CASCADE,
-                CONSTRAINT fk_mu_utensil FOREIGN KEY (utensil_id)
-                    REFERENCES utensil (id) ON DELETE CASCADE ON UPDATE CASCADE
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id INTEGER NOT NULL,
+                utensil_id INTEGER NOT NULL,
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (utensil_id) REFERENCES utensil(id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """)
-
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_member_utensil ON member_utensil(member_id, utensil_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_mu_member_id ON member_utensil(member_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_mu_utensil_id ON member_utensil(utensil_id)")
 
         # 6. session 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS session (
-                session_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                member_id BIGINT NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_session_member_id (member_id),
-                CONSTRAINT fk_session_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE
+                session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_session_member_id ON session(member_id)")
 
         # 7. chatbot 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chatbot (
-                chat_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                member_id BIGINT NOT NULL,
-                session_id BIGINT NOT NULL,
-                role ENUM('USER', 'AGENT') NOT NULL,
+                chat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id INTEGER NOT NULL,
+                session_id INTEGER NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('USER', 'AGENT')),
                 text TEXT,
-                type ENUM('GENERATE', 'VOICE') NOT NULL DEFAULT 'GENERATE',
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_chatbot_member_id (member_id),
-                INDEX idx_chatbot_session_time (session_id, created_at),
-                CONSTRAINT fk_chatbot_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
-                CONSTRAINT fk_chatbot_session FOREIGN KEY (session_id)
-                    REFERENCES session(session_id) ON DELETE CASCADE ON UPDATE CASCADE
+                type TEXT NOT NULL DEFAULT 'GENERATE' CHECK(type IN ('GENERATE', 'VOICE')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES session(session_id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chatbot_member_id ON chatbot(member_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chatbot_session_time ON chatbot(session_id, created_at)")
 
         # 8. generate 테이블
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS `generate` (
-                generate_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                session_id BIGINT DEFAULT NULL,
-                member_id BIGINT NOT NULL,
-                recipe_name VARCHAR(100) NOT NULL DEFAULT '',
-                ingredients JSON NOT NULL,
-                steps JSON NOT NULL,
-                gen_type ENUM('FIRST', 'RETRY') NOT NULL DEFAULT 'FIRST',
-                gen_order INT NOT NULL DEFAULT 1,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_generate_member_id (member_id),
-                INDEX idx_generate_session_id (session_id),
-                INDEX idx_generate_created_at (created_at),
-                CONSTRAINT fk_generate_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
-                CONSTRAINT fk_generate_session FOREIGN KEY (session_id)
-                    REFERENCES session(session_id) ON DELETE SET NULL ON UPDATE CASCADE
+            CREATE TABLE IF NOT EXISTS "generate" (
+                generate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER DEFAULT NULL,
+                member_id INTEGER NOT NULL,
+                recipe_name TEXT NOT NULL DEFAULT '',
+                ingredients TEXT NOT NULL,
+                steps TEXT NOT NULL,
+                gen_type TEXT NOT NULL DEFAULT 'FIRST' CHECK(gen_type IN ('FIRST', 'RETRY')),
+                gen_order INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES session(session_id) ON DELETE SET NULL ON UPDATE CASCADE
             )
         """)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_generate_member_id ON "generate"(member_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_generate_session_id ON "generate"(session_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_generate_created_at ON "generate"(created_at)')
 
         # 9. my_recipe 테이블
         cur.execute("""
             CREATE TABLE IF NOT EXISTS my_recipe (
-                my_recipe_id BIGINT NOT NULL AUTO_INCREMENT,
-                member_id BIGINT NOT NULL,
-                session_id BIGINT DEFAULT NULL,
-                generate_id BIGINT DEFAULT NULL,
-                recipe_name VARCHAR(100) NOT NULL DEFAULT '',
-                ingredients JSON NOT NULL,
-                steps JSON NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                rating TINYINT DEFAULT NULL,
-                image_url VARCHAR(2048) DEFAULT NULL,
-                cook_time VARCHAR(50) DEFAULT NULL COMMENT '조리 시간(원문: 예 10분 이내)',
-                elapsed_time INT DEFAULT NULL COMMENT '실제 소요 시간(초 단위)',
-                level VARCHAR(30) DEFAULT NULL COMMENT '난이도(원문: 예 아무나/초급)',
-                PRIMARY KEY (my_recipe_id),
-                KEY idx_my_recipe_member_id (member_id),
-                KEY idx_my_recipe_session_id (session_id),
-                KEY idx_my_recipe_generate_id (generate_id),
-                KEY idx_my_recipe_created_at (created_at),
-                CONSTRAINT fk_my_recipe_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
-                CONSTRAINT fk_my_recipe_session FOREIGN KEY (session_id)
-                    REFERENCES session(session_id) ON DELETE SET NULL ON UPDATE CASCADE,
-                CONSTRAINT fk_my_recipe_generate FOREIGN KEY (generate_id)
-                    REFERENCES `generate`(generate_id) ON DELETE SET NULL ON UPDATE CASCADE
+                my_recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id INTEGER NOT NULL,
+                session_id INTEGER DEFAULT NULL,
+                generate_id INTEGER DEFAULT NULL,
+                recipe_name TEXT NOT NULL DEFAULT '',
+                ingredients TEXT NOT NULL,
+                steps TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                rating INTEGER DEFAULT NULL,
+                image_url TEXT DEFAULT NULL,
+                cook_time TEXT DEFAULT NULL,
+                elapsed_time INTEGER DEFAULT NULL,
+                level TEXT DEFAULT NULL,
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES session(session_id) ON DELETE SET NULL ON UPDATE CASCADE,
+                FOREIGN KEY (generate_id) REFERENCES "generate"(generate_id) ON DELETE SET NULL ON UPDATE CASCADE
             )
         """)
-
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_my_recipe_member_id ON my_recipe(member_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_my_recipe_session_id ON my_recipe(session_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_my_recipe_generate_id ON my_recipe(generate_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_my_recipe_created_at ON my_recipe(created_at)")
 
         # 10. voice 테이블 (현재 미사용, 테이블만 유지)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS voice (
-                voice_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                member_id BIGINT NOT NULL,
+                voice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                member_id INTEGER NOT NULL,
                 context TEXT,
-                voice_type ENUM('STT', 'TTS') NOT NULL,
-                voice_file VARCHAR(2048) DEFAULT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_voice_chat_type (chat_id, voice_type),
-                INDEX idx_voice_member_id (member_id),
-                INDEX idx_voice_created_at (created_at),
-                CONSTRAINT fk_voice_chatbot FOREIGN KEY (chat_id)
-                    REFERENCES chatbot(chat_id) ON DELETE CASCADE ON UPDATE CASCADE,
-                CONSTRAINT fk_voice_member FOREIGN KEY (member_id)
-                    REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE
+                voice_type TEXT NOT NULL CHECK(voice_type IN ('STT', 'TTS')),
+                voice_file TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (chat_id) REFERENCES chatbot(chat_id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (member_id) REFERENCES member(id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """)
-
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_voice_chat_type ON voice(chat_id, voice_type)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_voice_member_id ON voice(member_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_voice_created_at ON voice(created_at)")
 
     logger.info("🔧 [init] 모든 테이블 생성 완료!")
 
 
 def _serialize_datetime(row: dict) -> dict:
-    """datetime 필드를 ISO 문자열로 변환"""
+    """datetime 필드를 ISO 문자열로 변환 (SQLite는 이미 문자열로 저장)"""
     if not row:
         return row
     for key in ("first_visit", "last_visit", "created_at", "updated_at"):
-        if row.get(key):
-            row[key] = row[key].isoformat()
+        val = row.get(key)
+        if val and not isinstance(val, str):
+            row[key] = val.isoformat()
     return row
 
 
@@ -269,7 +256,7 @@ def upsert_member(profile: dict) -> dict:
     """
     logger.info(f"👤 [member] upsert 시도 - naver_id: {profile.get('naver_id')}, email: {profile.get('email')}")
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM member WHERE naver_id = %s", (profile["naver_id"],))
+        cur.execute("SELECT * FROM member WHERE naver_id = ?", (profile["naver_id"],))
         row = cur.fetchone()
 
         if row:
@@ -278,11 +265,11 @@ def upsert_member(profile: dict) -> dict:
                 """
                 UPDATE member
                 SET to_cnt     = to_cnt + 1,
-                    last_visit = NOW(),
-                    nickname   = %s,
-                    birthday   = %s,
-                    mem_photo  = %s
-                WHERE naver_id = %s
+                    last_visit = datetime('now'),
+                    nickname   = ?,
+                    birthday   = ?,
+                    mem_photo  = ?
+                WHERE naver_id = ?
                 """,
                 (
                     profile["nickname"],
@@ -291,7 +278,7 @@ def upsert_member(profile: dict) -> dict:
                     profile["naver_id"],
                 ),
             )
-            cur.execute("SELECT * FROM member WHERE naver_id = %s", (profile["naver_id"],))
+            cur.execute("SELECT * FROM member WHERE naver_id = ?", (profile["naver_id"],))
             row = cur.fetchone()
         else:
             logger.info(f"👤 [member] 신규 회원 INSERT - email: {profile.get('email')}")
@@ -300,7 +287,7 @@ def upsert_member(profile: dict) -> dict:
                 INSERT INTO member
                     (naver_id, email, nickname, birthday, mem_photo, mem_type, to_cnt)
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, 1)
+                    (?, ?, ?, ?, ?, ?, 1)
                 """,
                 (
                     profile["naver_id"],
@@ -311,7 +298,7 @@ def upsert_member(profile: dict) -> dict:
                     profile.get("mem_type", "NAVER"),
                 ),
             )
-            cur.execute("SELECT * FROM member WHERE naver_id = %s", (profile["naver_id"],))
+            cur.execute("SELECT * FROM member WHERE naver_id = ?", (profile["naver_id"],))
             row = cur.fetchone()
 
     serialized = _serialize_datetime(row)
@@ -326,7 +313,7 @@ def upsert_member(profile: dict) -> dict:
 def get_member_by_id(member_id: int) -> Optional[dict]:
     """회원 ID로 조회"""
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM member WHERE id = %s", (member_id,))
+        cur.execute("SELECT * FROM member WHERE id = ?", (member_id,))
         row = cur.fetchone()
     return _serialize_datetime(row)
 
@@ -339,7 +326,7 @@ def get_families(member_id: int) -> list:
     """회원의 가족 목록 조회"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM family WHERE member_id = %s ORDER BY id",
+            "SELECT * FROM family WHERE member_id = ? ORDER BY id",
             (member_id,),
         )
         return cur.fetchall()
@@ -350,7 +337,7 @@ def add_family(member_id: int, relationship: str = "") -> dict:
     logger.info(f"👨‍👩‍👧 [family] INSERT - member_id: {member_id}, relationship: {relationship}")
     with mysql_cursor() as cur:
         cur.execute(
-            "INSERT INTO family (member_id, relationship) VALUES (%s, %s)",
+            "INSERT INTO family (member_id, relationship) VALUES (?, ?)",
             (member_id, relationship),
         )
         new_id = cur.lastrowid
@@ -359,12 +346,12 @@ def add_family(member_id: int, relationship: str = "") -> dict:
         # 빈 personalization 행 생성
         cur.execute(
             "INSERT INTO personalization (member_id, family_id, scope, allergies, dislikes) "
-            "VALUES (%s, %s, 'FAMILY', '[]', '[]')",
+            "VALUES (?, ?, 'FAMILY', '[]', '[]')",
             (member_id, new_id),
         )
         logger.info(f"🍽️ [personalization] INSERT (empty) - family_id: {new_id}")
 
-        cur.execute("SELECT * FROM family WHERE id = %s", (new_id,))
+        cur.execute("SELECT * FROM family WHERE id = ?", (new_id,))
         return cur.fetchone()
 
 
@@ -373,10 +360,10 @@ def update_family(family_id: int, relationship: str) -> dict:
     logger.info(f"👨‍👩‍👧 [family] UPDATE - family_id: {family_id}, relationship: {relationship}")
     with mysql_cursor() as cur:
         cur.execute(
-            "UPDATE family SET relationship = %s WHERE id = %s",
+            "UPDATE family SET relationship = ? WHERE id = ?",
             (relationship, family_id),
         )
-        cur.execute("SELECT * FROM family WHERE id = %s", (family_id,))
+        cur.execute("SELECT * FROM family WHERE id = ?", (family_id,))
         return cur.fetchone()
 
 
@@ -384,7 +371,7 @@ def delete_family(family_id: int):
     """가족 삭제 (CASCADE로 personalization도 삭제)"""
     logger.warning(f"👨‍👩‍👧 [family] DELETE - family_id: {family_id} (CASCADE: personalization도 삭제)")
     with mysql_cursor() as cur:
-        cur.execute("DELETE FROM family WHERE id = %s", (family_id,))
+        cur.execute("DELETE FROM family WHERE id = ?", (family_id,))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -404,7 +391,7 @@ def get_member_personalization(member_id: int) -> Optional[dict]:
     """회원 본인 개인화 조회 (scope=MEMBER)"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM personalization WHERE member_id = %s AND scope = 'MEMBER'",
+            "SELECT * FROM personalization WHERE member_id = ? AND scope = 'MEMBER'",
             (member_id,),
         )
         return _parse_personalization(cur.fetchone())
@@ -419,7 +406,7 @@ def upsert_member_personalization(member_id: int, allergies: list, dislikes: lis
 
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT id FROM personalization WHERE member_id = %s AND scope = 'MEMBER'",
+            "SELECT id FROM personalization WHERE member_id = ? AND scope = 'MEMBER'",
             (member_id,),
         )
         row = cur.fetchone()
@@ -427,18 +414,18 @@ def upsert_member_personalization(member_id: int, allergies: list, dislikes: lis
         if row:
             logger.info(f"🍽️ [personalization] UPDATE - psnl_id: {row['id']}")
             cur.execute(
-                "UPDATE personalization SET allergies = %s, dislikes = %s WHERE id = %s",
+                "UPDATE personalization SET allergies = ?, dislikes = ?, updated_at = datetime('now') WHERE id = ?",
                 (allergies_json, dislikes_json, row["id"]),
             )
         else:
             logger.info(f"🍽️ [personalization] INSERT - member_id: {member_id}, scope: MEMBER")
             cur.execute(
-                "INSERT INTO personalization (member_id, scope, allergies, dislikes) VALUES (%s, 'MEMBER', %s, %s)",
+                "INSERT INTO personalization (member_id, scope, allergies, dislikes) VALUES (?, 'MEMBER', ?, ?)",
                 (member_id, allergies_json, dislikes_json),
             )
 
         cur.execute(
-            "SELECT * FROM personalization WHERE member_id = %s AND scope = 'MEMBER'",
+            "SELECT * FROM personalization WHERE member_id = ? AND scope = 'MEMBER'",
             (member_id,),
         )
         return _parse_personalization(cur.fetchone())
@@ -448,7 +435,7 @@ def get_family_personalization(family_id: int) -> Optional[dict]:
     """가족 개인화 조회 (scope=FAMILY)"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM personalization WHERE family_id = %s AND scope = 'FAMILY'",
+            "SELECT * FROM personalization WHERE family_id = ? AND scope = 'FAMILY'",
             (family_id,),
         )
         return _parse_personalization(cur.fetchone())
@@ -463,7 +450,7 @@ def upsert_family_personalization(member_id: int, family_id: int, allergies: lis
 
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT id FROM personalization WHERE family_id = %s AND scope = 'FAMILY'",
+            "SELECT id FROM personalization WHERE family_id = ? AND scope = 'FAMILY'",
             (family_id,),
         )
         row = cur.fetchone()
@@ -471,18 +458,18 @@ def upsert_family_personalization(member_id: int, family_id: int, allergies: lis
         if row:
             logger.info(f"🍽️ [personalization] UPDATE - psnl_id: {row['id']}")
             cur.execute(
-                "UPDATE personalization SET allergies = %s, dislikes = %s WHERE id = %s",
+                "UPDATE personalization SET allergies = ?, dislikes = ?, updated_at = datetime('now') WHERE id = ?",
                 (allergies_json, dislikes_json, row["id"]),
             )
         else:
             logger.info(f"🍽️ [personalization] INSERT - family_id: {family_id}, scope: FAMILY")
             cur.execute(
-                "INSERT INTO personalization (member_id, family_id, scope, allergies, dislikes) VALUES (%s, %s, 'FAMILY', %s, %s)",
+                "INSERT INTO personalization (member_id, family_id, scope, allergies, dislikes) VALUES (?, ?, 'FAMILY', ?, ?)",
                 (member_id, family_id, allergies_json, dislikes_json),
             )
 
         cur.execute(
-            "SELECT * FROM personalization WHERE family_id = %s AND scope = 'FAMILY'",
+            "SELECT * FROM personalization WHERE family_id = ? AND scope = 'FAMILY'",
             (family_id,),
         )
         return _parse_personalization(cur.fetchone())
@@ -505,7 +492,7 @@ def seed_utensils(tool_names: List[str]):
     with mysql_cursor() as cur:
         for name in tool_names:
             cur.execute(
-                "INSERT IGNORE INTO utensil (name) VALUES (%s)",
+                "INSERT OR IGNORE INTO utensil (name) VALUES (?)",
                 (name,),
             )
     logger.info(f"🔧 [utensil] 시딩 완료")
@@ -515,7 +502,7 @@ def get_member_utensils(member_id: int) -> list:
     """회원이 보유한 조리도구 ID 목록"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT utensil_id FROM member_utensil WHERE member_id = %s",
+            "SELECT utensil_id FROM member_utensil WHERE member_id = ?",
             (member_id,),
         )
         return [row["utensil_id"] for row in cur.fetchall()]
@@ -525,10 +512,10 @@ def set_member_utensils(member_id: int, utensil_ids: List[int]):
     """회원 조리도구 전체 교체"""
     logger.info(f"🔧 [member_utensil] 교체 - member_id: {member_id}, utensil_ids: {utensil_ids}")
     with mysql_cursor() as cur:
-        cur.execute("DELETE FROM member_utensil WHERE member_id = %s", (member_id,))
+        cur.execute("DELETE FROM member_utensil WHERE member_id = ?", (member_id,))
         for uid in utensil_ids:
             cur.execute(
-                "INSERT INTO member_utensil (member_id, utensil_id) VALUES (%s, %s)",
+                "INSERT INTO member_utensil (member_id, utensil_id) VALUES (?, ?)",
                 (member_id, uid),
             )
     logger.info(f"🔧 [member_utensil] 교체 완료 - {len(utensil_ids)}개 도구")
@@ -543,19 +530,19 @@ def create_session(member_id: int) -> dict:
     logger.info(f"💬 [session] INSERT - member_id: {member_id}")
     with mysql_cursor() as cur:
         cur.execute(
-            "INSERT INTO session (member_id) VALUES (%s)",
+            "INSERT INTO session (member_id) VALUES (?)",
             (member_id,),
         )
         session_id = cur.lastrowid
         logger.info(f"💬 [session] INSERT 완료 - session_id: {session_id}")
-        cur.execute("SELECT * FROM session WHERE session_id = %s", (session_id,))
+        cur.execute("SELECT * FROM session WHERE session_id = ?", (session_id,))
         return _serialize_datetime(cur.fetchone())
 
 
 def get_session(session_id: int) -> Optional[dict]:
     """세션 조회"""
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM session WHERE session_id = %s", (session_id,))
+        cur.execute("SELECT * FROM session WHERE session_id = ?", (session_id,))
         return _serialize_datetime(cur.fetchone())
 
 
@@ -563,7 +550,7 @@ def get_member_sessions(member_id: int, limit: int = 20) -> list:
     """회원의 세션 목록 조회 (최신순)"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM session WHERE member_id = %s ORDER BY created_at DESC LIMIT %s",
+            "SELECT * FROM session WHERE member_id = ? ORDER BY created_at DESC LIMIT ?",
             (member_id, limit),
         )
         return [_serialize_datetime(row) for row in cur.fetchall()]
@@ -591,13 +578,13 @@ def add_chat_message(
         cur.execute(
             """
             INSERT INTO chatbot (member_id, session_id, role, text, type)
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (member_id, session_id, db_role, text, msg_type),
         )
         chat_id = cur.lastrowid
         logger.info(f"💬 [chatbot] INSERT 완료 - chat_id: {chat_id}")
-        cur.execute("SELECT * FROM chatbot WHERE chat_id = %s", (chat_id,))
+        cur.execute("SELECT * FROM chatbot WHERE chat_id = ?", (chat_id,))
         return _serialize_datetime(cur.fetchone())
 
 
@@ -605,7 +592,7 @@ def get_session_chats(session_id: int) -> list:
     """세션의 채팅 메시지 목록 (시간순)"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM chatbot WHERE session_id = %s ORDER BY created_at ASC",
+            "SELECT * FROM chatbot WHERE session_id = ? ORDER BY created_at ASC",
             (session_id,),
         )
         return [_serialize_datetime(row) for row in cur.fetchall()]
@@ -614,7 +601,7 @@ def get_session_chats(session_id: int) -> list:
 def get_chat_by_id(chat_id: int) -> Optional[dict]:
     """채팅 메시지 조회"""
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM chatbot WHERE chat_id = %s", (chat_id,))
+        cur.execute("SELECT * FROM chatbot WHERE chat_id = ?", (chat_id,))
         return _serialize_datetime(cur.fetchone())
 
 
@@ -636,8 +623,8 @@ def create_generate(
     with mysql_cursor() as cur:
         cur.execute(
             """
-            INSERT INTO generate (session_id, member_id, recipe_name, ingredients, steps, gen_type, gen_order)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO "generate" (session_id, member_id, recipe_name, ingredients, steps, gen_type, gen_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -651,7 +638,7 @@ def create_generate(
         )
         generate_id = cur.lastrowid
         logger.info(f"🍳 [generate] INSERT 완료 - generate_id: {generate_id}")
-        cur.execute("SELECT * FROM generate WHERE generate_id = %s", (generate_id,))
+        cur.execute('SELECT * FROM "generate" WHERE generate_id = ?', (generate_id,))
         row = cur.fetchone()
         row["ingredients"] = json.loads(row["ingredients"]) if row["ingredients"] else []
         row["steps"] = json.loads(row["steps"]) if row["steps"] else []
@@ -661,7 +648,7 @@ def create_generate(
 def get_generate(generate_id: int) -> Optional[dict]:
     """생성 레시피 조회"""
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM generate WHERE generate_id = %s", (generate_id,))
+        cur.execute('SELECT * FROM "generate" WHERE generate_id = ?', (generate_id,))
         row = cur.fetchone()
         if row:
             row["ingredients"] = json.loads(row["ingredients"]) if row["ingredients"] else []
@@ -674,7 +661,7 @@ def get_session_generates(session_id: int) -> list:
     """세션의 생성 레시피 목록"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM generate WHERE session_id = %s ORDER BY gen_order ASC",
+            'SELECT * FROM "generate" WHERE session_id = ? ORDER BY gen_order ASC',
             (session_id,),
         )
         results = []
@@ -708,7 +695,7 @@ def save_my_recipe(
         cur.execute(
             """
             INSERT INTO my_recipe (member_id, session_id, generate_id, recipe_name, ingredients, steps, rating, image_url, cook_time, level, elapsed_time)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 member_id,
@@ -726,7 +713,7 @@ def save_my_recipe(
         )
         my_recipe_id = cur.lastrowid
         logger.info(f"📖 [my_recipe] INSERT 완료 - my_recipe_id: {my_recipe_id}")
-        cur.execute("SELECT * FROM my_recipe WHERE my_recipe_id = %s", (my_recipe_id,))
+        cur.execute("SELECT * FROM my_recipe WHERE my_recipe_id = ?", (my_recipe_id,))
         row = cur.fetchone()
         row["ingredients"] = json.loads(row["ingredients"]) if row["ingredients"] else []
         row["steps"] = json.loads(row["steps"]) if row["steps"] else []
@@ -737,7 +724,7 @@ def get_my_recipes(member_id: int, limit: int = 50) -> list:
     """내 레시피 목록 (최신순)"""
     with mysql_cursor() as cur:
         cur.execute(
-            "SELECT * FROM my_recipe WHERE member_id = %s ORDER BY created_at DESC LIMIT %s",
+            "SELECT * FROM my_recipe WHERE member_id = ? ORDER BY created_at DESC LIMIT ?",
             (member_id, limit),
         )
         results = []
@@ -751,7 +738,7 @@ def get_my_recipes(member_id: int, limit: int = 50) -> list:
 def get_my_recipe(my_recipe_id: int) -> Optional[dict]:
     """내 레시피 상세 조회"""
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM my_recipe WHERE my_recipe_id = %s", (my_recipe_id,))
+        cur.execute("SELECT * FROM my_recipe WHERE my_recipe_id = ?", (my_recipe_id,))
         row = cur.fetchone()
         if row:
             row["ingredients"] = json.loads(row["ingredients"]) if row["ingredients"] else []
@@ -771,13 +758,13 @@ def update_my_recipe(
     updates = []
     params = []
     if recipe_name is not None:
-        updates.append("recipe_name = %s")
+        updates.append("recipe_name = ?")
         params.append(recipe_name)
     if rating is not None:
-        updates.append("rating = %s")
+        updates.append("rating = ?")
         params.append(rating)
     if image_url is not None:
-        updates.append("image_url = %s")
+        updates.append("image_url = ?")
         params.append(image_url)
 
     if not updates:
@@ -786,7 +773,7 @@ def update_my_recipe(
     params.append(my_recipe_id)
     with mysql_cursor() as cur:
         cur.execute(
-            f"UPDATE my_recipe SET {', '.join(updates)} WHERE my_recipe_id = %s",
+            f"UPDATE my_recipe SET {', '.join(updates)} WHERE my_recipe_id = ?",
             tuple(params),
         )
         return get_my_recipe(my_recipe_id)
@@ -796,7 +783,7 @@ def delete_my_recipe(my_recipe_id: int):
     """내 레시피 삭제"""
     logger.warning(f"📖 [my_recipe] DELETE - my_recipe_id: {my_recipe_id}")
     with mysql_cursor() as cur:
-        cur.execute("DELETE FROM my_recipe WHERE my_recipe_id = %s", (my_recipe_id,))
+        cur.execute("DELETE FROM my_recipe WHERE my_recipe_id = ?", (my_recipe_id,))
     logger.info(f"📖 [my_recipe] DELETE 완료")
 
 
@@ -817,13 +804,15 @@ def save_voice(
         cur.execute(
             """
             INSERT INTO voice (chat_id, member_id, voice_type, context, voice_file)
-            VALUES (%s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE context = VALUES(context), voice_file = VALUES(voice_file)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, voice_type) DO UPDATE SET
+                context = excluded.context,
+                voice_file = excluded.voice_file
             """,
             (chat_id, member_id, voice_type, context, voice_file),
         )
         cur.execute(
-            "SELECT * FROM voice WHERE chat_id = %s AND voice_type = %s",
+            "SELECT * FROM voice WHERE chat_id = ? AND voice_type = ?",
             (chat_id, voice_type),
         )
         return _serialize_datetime(cur.fetchone())
@@ -832,7 +821,7 @@ def save_voice(
 def get_chat_voices(chat_id: int) -> list:
     """채팅 메시지의 음성 데이터 목록"""
     with mysql_cursor() as cur:
-        cur.execute("SELECT * FROM voice WHERE chat_id = %s", (chat_id,))
+        cur.execute("SELECT * FROM voice WHERE chat_id = ?", (chat_id,))
         return [_serialize_datetime(row) for row in cur.fetchall()]
 
 
@@ -868,3 +857,59 @@ def load_mypage_data(member_id: int) -> dict:
         "utensils": utensils,
         "member_utensil_ids": member_utensil_ids,
     }
+
+
+# ══════════════════════════════════════════════════════════════
+# 기본 유저 시딩 (로컬 실행 시 필요)
+# ══════════════════════════════════════════════════════════════
+
+def seed_default_users():
+    """
+    로컬 실행에 필요한 기본 유저 2명을 미리 생성.
+    - id=1 : 퓨 (체험용)
+    - id=2 : 게스트
+    이미 존재하면 건너뜀.
+    """
+    defaults = [
+        {
+            "naver_id": "peu_default",
+            "email": "peu@recipeu.com",
+            "nickname": "퓨",
+            "birthday": "02-06",
+            "mem_photo": "",
+            "mem_type": "DEFAULT",
+        },
+        {
+            "naver_id": "guest_default",
+            "email": "guest@recipeu.com",
+            "nickname": "게스트",
+            "birthday": "01-01",
+            "mem_photo": "",
+            "mem_type": "DEFAULT",
+        },
+    ]
+    with mysql_cursor() as cur:
+        for user in defaults:
+            cur.execute("SELECT id FROM member WHERE naver_id = ?", (user["naver_id"],))
+            if cur.fetchone():
+                continue
+            cur.execute(
+                """
+                INSERT INTO member (naver_id, email, nickname, birthday, mem_photo, mem_type, to_cnt)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    user["naver_id"],
+                    user["email"],
+                    user["nickname"],
+                    user["birthday"],
+                    user["mem_photo"],
+                    user["mem_type"],
+                ),
+            )
+            new_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO personalization (member_id, scope, allergies, dislikes) VALUES (?, 'MEMBER', '[]', '[]')",
+                (new_id,),
+            )
+    logger.info("🌱 [seed] 기본 유저 시딩 완료 (퓨 id=1, 게스트 id=2)")

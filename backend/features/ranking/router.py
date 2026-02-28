@@ -8,14 +8,19 @@ from features.ranking.schemas import RecipeDetail, RecipePreview, RankingRespons
 
 router = APIRouter()
 
-# MongoDB 연결
-MONGODB_URL = os.getenv(
-    "MONGODB_URL", "mongodb://root:RootPassword123@136.113.251.237:27017"
-)
+# MongoDB 연결 (서버 없이 로컬 실행 시에도 앱이 기동될 수 있도록 graceful 처리)
+MONGODB_URL = os.getenv("MONGODB_URL", "")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "recipe_db")
 
-client = AsyncIOMotorClient(MONGODB_URL)
-db = client[DATABASE_NAME]
+client = None
+db = None
+
+if MONGODB_URL:
+    try:
+        client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=3000)
+        db = client[DATABASE_NAME]
+    except Exception as _e:
+        print(f"⚠️  MongoDB 연결 실패 (랭킹 기능 비활성): {_e}")
 
 RANKING_CACHE = {
     "today": None,
@@ -25,6 +30,9 @@ RANKING_CACHE = {
 
 async def load_today_ranking_cache():
     """오늘 랭킹을 미리 메모리에 로드 (순서 보존 버전)"""
+    if db is None:
+        print("⚠️  MongoDB 없음 - 랭킹 캐시 로딩 스킵")
+        return
 
     now = datetime.now()
     
@@ -90,10 +98,13 @@ import time
 
 @router.get("/today")
 async def get_today_ranking(limit: int = Query(100, ge=1, le=100)):
+    if db is None:
+        return {"date_kst": "", "recipes": [], "total_count": 0}
+
     start = time.time()
-    
-    print(f"🔍 캐시 확인: {RANKING_CACHE['today'] is not None}") 
-    
+
+    print(f"🔍 캐시 확인: {RANKING_CACHE['today'] is not None}")
+
     if RANKING_CACHE["today"]:
         data = RANKING_CACHE["today"]
         
@@ -131,6 +142,8 @@ async def get_ranking_by_date(
     date_kst: str,
     limit: int = Query(100, ge=1, le=100),
 ):
+    if db is None:
+        raise HTTPException(503, "랭킹 서비스를 사용할 수 없습니다 (MongoDB 미연결)")
 
     try:
         datetime.strptime(date_kst, "%Y-%m-%d")
@@ -176,6 +189,8 @@ async def search_recipes(
     keyword: str = Query(..., min_length=1),
     limit: int = Query(20, ge=1, le=100),
 ):
+    if db is None:
+        return []
 
     cursor = db.recipes.find(
         {
@@ -208,6 +223,8 @@ async def search_recipes(
 
 @router.get("/recipes/{recipe_id}", response_model=RecipeDetail)
 async def get_recipe_detail(recipe_id: str):
+    if db is None:
+        raise HTTPException(503, "랭킹 서비스를 사용할 수 없습니다 (MongoDB 미연결)")
 
     recipe = await db.recipes.find_one({"recipe_id": recipe_id})
 

@@ -379,7 +379,9 @@ class RecipeService:
         print(f"[RecipeService] 최종 레시피: {recipe_json.get('title')}")
         print(f"[RecipeService] 인원수: {recipe_json['servings']}")
         print(f"[RecipeService] 이미지: {recipe_json.get('image', 'None')[:60]}...")
-        
+
+        print_recipe_token_summary()
+
         return recipe_json
 
     async def generate_recipe_from_existing(
@@ -425,6 +427,8 @@ class RecipeService:
         print(f"[RecipeService] 최종 레시피: {recipe_json.get('title')}")
         print(f"[RecipeService] 인원수: {recipe_json['servings']}")
         print(f"[RecipeService] 이미지: {recipe_json.get('image', 'None')[:60]}...")
+
+        print_recipe_token_summary()
 
         return recipe_json
 
@@ -486,7 +490,12 @@ class RecipeService:
         llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=2000)
 
         try:
+            import time
+            _t0 = time.time()
             result = llm.invoke(prompt)
+            _step_timings["레시피 생성"] = int((time.time() - _t0) * 1000)
+            print_token_usage(result, "레시피 생성")
+
             response_text = result.content.strip()
 
             # TOON 우선 → JSON fallback 파싱
@@ -593,7 +602,10 @@ class RecipeService:
         llm = ChatClovaX(model="HCX-DASH-001", temperature=0.2, max_tokens=50)
         
         try:
+            import time
+            _t0 = time.time()
             result = llm.invoke(prompt)
+            _step_timings["검색 쿼리 추출"] = int((time.time() - _t0) * 1000)
             print_token_usage(result, "검색 쿼리 추출")
 
             query = result.content.strip()
@@ -696,7 +708,10 @@ class RecipeService:
         llm = ChatClovaX(model="HCX-DASH-003", temperature=0.2, max_tokens=2000)
         
         try:
+            import time
+            _t0 = time.time()
             result = llm.invoke(prompt)
+            _step_timings["레시피 생성"] = int((time.time() - _t0) * 1000)
             print_token_usage(result, "레시피 생성")
 
             response_text = result.content.strip()

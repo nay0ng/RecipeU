@@ -8,19 +8,12 @@ from features.ranking.schemas import RecipeDetail, RecipePreview, RankingRespons
 
 router = APIRouter()
 
-# MongoDB 연결 (서버 없이 로컬 실행 시에도 앱이 기동될 수 있도록 graceful 처리)
-MONGODB_URL = os.getenv("MONGO_URI", "")
+# MongoDB 연결
+MONGODB_URL = os.getenv("MONGO_URI", "mongodb://root:RootPassword123@136.113.251.237:27017")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "recipe_db")
 
-client = None
-db = None
-
-if MONGODB_URL:
-    try:
-        client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=3000)
-        db = client[DATABASE_NAME]
-    except Exception as _e:
-        print(f"⚠️  MongoDB 연결 실패 (랭킹 기능 비활성): {_e}")
+client = AsyncIOMotorClient(MONGODB_URL)
+db = client[DATABASE_NAME]
 
 RANKING_CACHE = {
     "today": None,

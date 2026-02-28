@@ -12,7 +12,7 @@ from langchain_naver import ChatClovaX
 
 from core.websocket import manager
 from core.dependencies import get_rag_system
-from features.chat.agent import create_chat_agent, _node_timings
+from features.chat.agent import create_chat_agent, _node_timings, print_token_summary
 from models.mysql_db import create_session, add_chat_message
 from utils.intent import detect_chat_intent, Intent, extract_allergy_dislike, extract_ingredients_from_modification
 
@@ -1222,6 +1222,7 @@ async def chat_websocket(
 
                     total_ms = (time.time() - start_time) * 1000
                     _print_timing_summary(total_ms)
+                    print_token_summary()
 
                     # 캐시 저장
                     agent_docs = result.get("documents", [])
@@ -1263,19 +1264,21 @@ async def chat_websocket(
                     elapsed = time.time() - start_time
                     logger.warning(f"[WS] Agent 타임아웃 ({elapsed:.1f}초)")
                     _print_timing_summary(elapsed * 1000)
-                    
+                    print_token_summary()
+
                     await websocket.send_json({
                         "type": "agent_message",
                         "content": f"죄송합니다. 응답 시간이 너무 오래 걸렸어요 ({int(elapsed)}초). 다시 시도해주세요."
                     })
-                    
+
                 except Exception as e:
                     elapsed = time.time() - start_time
                     logger.error(f"[WS] Agent 실행 에러 ({elapsed:.1f}초): {e}", exc_info=True)
                     _print_timing_summary(elapsed * 1000)
-                    
+                    print_token_summary()
+
                     await websocket.send_json({
-                        "type": "error", 
+                        "type": "error",
                         "message": f"오류가 발생했습니다 ({int(elapsed)}초). 다시 시도해주세요."
                     })
                     

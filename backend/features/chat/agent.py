@@ -656,9 +656,13 @@ def create_chat_agent(rag_system):
                     # 줄바꿈으로 구분된 재료들을 쉼표로 변환
                     # "- 재료명 양" → "재료명 양"
                     ingredients_lines = []
+                    cooking_tools_line = ""  # 조리도구 섹션 보존
                     for line in ingredients_section.split('\n'):
                         line = line.strip()
-                        if line and not line.startswith('**'):  # 다음 섹션 시작 전까지
+                        if line.startswith('**조리도구:**') or line.startswith('조리도구:'):
+                            cooking_tools_line = line
+                            break
+                        elif line and not line.startswith('**'):  # 다음 섹션 시작 전까지
                             # "- " 제거
                             line = re.sub(r'^[-\*]\s*', '', line)
                             if line:
@@ -670,9 +674,12 @@ def create_chat_agent(rag_system):
                     # 쉼표로 연결
                     ingredients_text = ', '.join(ingredients_lines)
 
-                    # 재구성
-                    cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
-                    print(f"   [후처리] 재료 형식 정리됨")
+                    # 재구성 (조리도구 섹션 유지)
+                    if cooking_tools_line:
+                        cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}\n{cooking_tools_line}"
+                    else:
+                        cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
+                    print(f"   [후처리] 재료 형식 정리됨 (조리도구: {'있음' if cooking_tools_line else '없음'})")
 
             print(f"   생성 완료: {cleaned_answer[:50]}...")
             return {"generation": cleaned_answer}

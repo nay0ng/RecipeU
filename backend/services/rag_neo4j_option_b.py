@@ -301,7 +301,9 @@ class RecipeRAGLangChain:
         title = record["title"] or "N/A"
         intro = record["intro"] or ""
         steps = record["steps"] or ""
-        page_content = f"{title}\n{intro}\n\n{steps}"
+        tools = record["cooking_tools"] or []
+        tools_str = ", ".join(tools) if tools else ""
+        page_content = f"{title}\n{intro}\n조리도구: {tools_str}\n\n{steps}"
         return Document(
             page_content=page_content,
             metadata={

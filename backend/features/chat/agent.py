@@ -265,7 +265,8 @@ def create_chat_agent(rag_system):
                 metadata={
                     "title": doc.get("title", ""),
                     "cook_time": doc.get("cook_time", ""),
-                    "level": doc.get("level", "")
+                    "level": doc.get("level", ""),
+                    "cooking_tools": doc.get("cooking_tools", []),
                 }
             )
             for doc in results
@@ -343,30 +344,9 @@ def create_chat_agent(rag_system):
             if not found_exact_match:
                 print("   제목 매칭 실패 → 웹 검색")
                 return {"web_search_needed": "yes"}
-            
-            context_text = "\n".join([
-                f"- {doc.page_content[:200]}"
-                for doc in documents[:3]
-            ])
 
-            from langchain_naver import ChatClovaX
-            llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=10)
-            chain = GRADE_PROMPT | llm
-            _grade_response = chain.invoke({
-                "question": question,
-                "context": context_text
-            })
-            print_token_usage(_grade_response, "관련성 평가")
-            score = _grade_response.content.strip()
-
-            print(f"   평가: {score}")
-            
-            if "yes" in score.lower():
-                print("   DB 충분 → 생성")
-                return {"web_search_needed": "no"}
-            else:
-                print("   DB 부족 → 웹 검색")
-                return {"web_search_needed": "yes"}
+            print("   DB 충분 → 생성")
+            return {"web_search_needed": "no"}
                 
         except Exception as e:
             print(f"   평가 실패: {e}")

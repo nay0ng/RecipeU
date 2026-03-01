@@ -55,6 +55,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [dbSessionId, setDbSessionId] = useState(null);
 
   const [flowState, setFlowState] = useState(
     skipToChat ? "FREE_CHAT" : messages.length > 0 ? "FREE_CHAT" : "LOADING",

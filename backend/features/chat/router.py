@@ -925,8 +925,10 @@ async def chat_websocket(
                 # 1. 요리 무관 질문 → title 검색으로 재확인 후 외부 챗봇으로 리다이렉트
                 if user_intent == Intent.NOT_COOKING:
                     logger.info(f"[WS] 요리 무관 질문 감지 → title 검색으로 재확인")
-                    # title 매칭만 사용 (벡터 검색은 아무거나 반환하므로 제외)
-                    title_check = rag_system._milvus_title_search(content, k=1)
+                    # 짧은 입력(≤4단어)만 재확인: "베이컨" 같은 줄임말/신조어 대응
+                    # 긴 문장은 NOT_COOKING이 맞을 가능성이 높으므로 override 안 함
+                    word_count = len(content.strip().split())
+                    title_check = rag_system._milvus_title_search(content, k=1) if word_count <= 4 else []
                     if title_check and len(title_check) > 0:
                         logger.info(f"[WS] title 매칭 결과 있음 → RECIPE_SEARCH로 변경 (줄임말/신조어 가능)")
                         user_intent = Intent.RECIPE_SEARCH

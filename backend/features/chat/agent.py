@@ -469,16 +469,38 @@ def create_chat_agent(rag_system):
 
         formatted_history = "\n".join(history[-10:]) if isinstance(history, list) else str(history)
 
-        # 컨텍스트 구성: 제목을 명시하여 LLM이 어떤 레시피인지 파악할 수 있게 함
+        # 컨텍스트 구성: TOON 형식으로 입력 토큰 절약
+        # title·cooking_tools는 TOON 헤더로 표현하고 page_content에서 중복 제거
         context_parts = []
         for doc in documents:
             title = doc.metadata.get("title", "")
-            content = doc.page_content if len(doc.page_content) < 1000 else doc.page_content[:800]
+            cook_time = doc.metadata.get("cook_time", "")
+            level = doc.metadata.get("level", "")
+            tools = doc.metadata.get("cooking_tools", [])
+
+            toon_lines = []
             if title:
-                context_parts.append(f"[레시피: {title}]\n{content}")
-            else:
-                context_parts.append(content)
-        context_text = "\n\n".join(context_parts)
+                toon_lines.append(f"title: {title}")
+            if cook_time and cook_time not in ("", "N/A"):
+                toon_lines.append(f"cook_time: {cook_time}")
+            if level and level not in ("", "N/A"):
+                toon_lines.append(f"level: {level}")
+            if tools:
+                toon_lines.append(f"cooking_tools: {','.join(tools)}")
+
+            # page_content에서 title·조리도구 중복 줄 제거 후 500자 압축
+            content_lines = doc.page_content.split('\n')
+            if content_lines and content_lines[0].strip() == title:
+                content_lines = content_lines[1:]
+            content_lines = [l for l in content_lines if not l.startswith('조리도구:')]
+            content = '\n'.join(content_lines).strip()
+            if len(content) > 500:
+                content = content[:500]
+            if content:
+                toon_lines.append(content)
+
+            context_parts.append("\n".join(toon_lines))
+        context_text = "\n---\n".join(context_parts)
 
         # constraint_warning이 있어도 생성을 차단하지 않음
         # Neo4j가 이미 DB 레벨에서 알레르기 재료를 필터링했으므로 계속 진행
@@ -580,9 +602,9 @@ def create_chat_agent(rag_system):
                 print(f"[최종 제약사항] 수정 이력 없음")
             print(f"{'='*60}\n")
 
-            # max_tokens 명시적 설정 (토큰 절약)
+            # TOON 출력은 마크다운보다 compact → max_tokens 절감
             from langchain_naver import ChatClovaX
-            llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=1000)
+            llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=400)
             chain = GENERATE_PROMPT | llm
             _generate_response = chain.invoke({
                 "context": context_text,
@@ -596,163 +618,171 @@ def create_chat_agent(rag_system):
             answer = _generate_response.content.strip()
             print(f"\n[DEBUG] LLM 원본 응답:\n{answer}\n[/DEBUG]\n")
 
-            # 후처리: 조리법 제거 (채팅용, 재료만 출력)
-            # "조리법:" 또는 "1. " 로 시작하는 부분 이후 제거
             import re
+            from toon_format import decode as toon_decode
 
-            # 조리법 섹션 찾기 (여러 패턴 지원)
-            cooking_patterns = [
-                r'\n조리법[\s:：]+.*',  # "조리법:" 또는 "조리법 :"
-                r'\n\*\*조리법\*\*[\s:：]+.*',  # "**조리법:**"
-            ]
+            # TOON 코드블록·접두어 제거
+            cleaned_raw = re.sub(r'```(?:toon)?\n?', '', answer)
+            cleaned_raw = re.sub(r'\n?```', '', cleaned_raw).strip()
+            if re.match(r'TOON\s*:', cleaned_raw, re.IGNORECASE):
+                cleaned_raw = cleaned_raw.split(":", 1)[1].strip()
 
-            cleaned_answer = answer
-            for pattern in cooking_patterns:
-                # 해당 패턴부터 끝까지 제거
-                match = re.search(pattern, cleaned_answer, re.DOTALL | re.IGNORECASE)
-                if match:
-                    cleaned_answer = cleaned_answer[:match.start()].strip()
-                    print(f"   [후처리] 조리법 제거됨")
-                    break
-
-            # 알레르기/비선호 관련 텍스트 제거 (출력에 포함되면 안됨)
-            allergy_patterns = [
-                r'\*알레르기.*?\n',  # "*알레르기 재료 ..."
-                r'알레르기 재료.*?\n',  # "알레르기 재료 (절대 사용 금지): ..."
-                r'비선호 음식.*?\n',  # "비선호 음식 (피해야 함): ..."
-            ]
-
-            for pattern in allergy_patterns:
-                cleaned_answer = re.sub(pattern, '', cleaned_answer, flags=re.IGNORECASE)
-
-            # 볼드 없는 형식을 볼드 형식으로 통일
-            # LLM이 "소개 :", "재료 :" 처럼 공백+콜론 형식으로 출력하는 경우도 처리
-            if re.search(r'소개\s*:', cleaned_answer) and '**소개:**' not in cleaned_answer:
-                cleaned_answer = re.sub(r'(?<!\*)소개\s*:\s*', '**소개:** ', cleaned_answer, count=1)
-            if re.search(r'재료\s*:', cleaned_answer) and '**재료:**' not in cleaned_answer:
-                cleaned_answer = re.sub(r'(?<!\*)재료\s*:\s*', '**재료:** ', cleaned_answer, count=1)
-
-            # 소개 문구 정제: 이모티콘, 캐주얼 표현 제거
-            if '**소개:**' in cleaned_answer:
-                # 소개 섹션 추출 (같은 줄만, DOTALL 사용하지 않음)
-                intro_match = re.search(r'\*\*소개:\*\*\s*(.+)', cleaned_answer)
-                if intro_match:
-                    intro_text = intro_match.group(1).strip()
-
-                    # 이모티콘 제거 (ᄒ.ᄒ, ᄏᄏ, :), ^^, 등)
-                    intro_text = re.sub(r'[ᄀ-ᄒ]{2,}', '', intro_text)  # ᄏᄏ, ᄒᄒ 등
-                    intro_text = re.sub(r'[:;]\)|:\(|:\)|^^|ㅎㅎ|ㅋㅋ', '', intro_text)
-
-                    # 캐주얼 표현 제거
-                    casual_phrases = [
-                        r'알려드릴게요[!\s]*',
-                        r'드릴게요[!\s]*',
-                        r'[~]+',
-                        r'요[~]+',
-                        r'답니다[:\s]*\)',
-                        r'하죠[!\s]*',
-                        r'그만큼.*?있답니다',
-                        r'레시피를 알려드릴게요',
-                        r'소개해드릴게요',
-                    ]
-                    for phrase in casual_phrases:
-                        intro_text = re.sub(phrase, '', intro_text)
-
-                    # 다중 공백 정리
-                    intro_text = re.sub(r'\s+', ' ', intro_text).strip()
-
-                    # 마침표로 끝나지 않으면 추가
-                    if intro_text and not intro_text.endswith('.'):
-                        intro_text += '.'
-
-                    # 소개 문구 교체 (같은 줄만 교체, DOTALL 사용하지 않음)
-                    cleaned_answer = re.sub(
-                        r'\*\*소개:\*\*\s*.+',
-                        f'**소개:** {intro_text}',
-                        cleaned_answer,
-                        count=1
-                    )
-                    print(f"   [후처리] 소개 정제됨: {intro_text[:50]}...")
-
-            # 재료 형식 정리: 줄바꿈 제거, 쉼표로 변환
-            # "- 재료명 양" 형식을 "재료명 양," 형식으로 변환
-            if '**재료:**' in cleaned_answer:
-                # 재료 섹션 추출
-                parts = cleaned_answer.split('**재료:**')
-                if len(parts) == 2:
-                    before_ingredients = parts[0]
-                    ingredients_section = parts[1].strip()
-
-                    # 줄바꿈으로 구분된 재료들을 쉼표로 변환
-                    # "- 재료명 양" → "재료명 양"
-                    ingredients_lines = []
-                    cooking_tools_line = ""  # 조리도구 섹션 보존
-                    for line in ingredients_section.split('\n'):
-                        line = line.strip()
-                        if re.match(r'\*{0,2}조리도구\*{0,2}\s*:', line):
-                            # 빈 조리도구 라인은 무시 (예: "조리도구: " 처럼 내용 없는 경우)
-                            content = re.split(r'\s*:\s*', line, maxsplit=1)
-                            if len(content) > 1 and content[1].strip():
-                                cooking_tools_line = line
-                            break
-                        elif line and not line.startswith('**'):  # 다음 섹션 시작 전까지
-                            # "- " 제거
-                            line = re.sub(r'^[-\*]\s*', '', line)
-                            if line:
-                                ingredients_lines.append(line)
-                        elif line.startswith('**'):
-                            # 다음 섹션 발견, 중단
-                            break
-
-                    # 쉼표로 연결
-                    ingredients_text = ', '.join(ingredients_lines)
-
-                    # 알레르기 재료 필터링 (재료 단위로 검사)
-                    # LLM이 "새우살" 같은 파생어도 포함할 수 있으므로 substring 매칭
-                    allergies_list = user_constraints.get("allergies", []) if user_constraints else []
-                    if allergies_list:
-                        individual_ings = [ing.strip() for ing in ingredients_text.split(',') if ing.strip()]
-                        filtered_ings = []
-                        for ing in individual_ings:
-                            matched = [a for a in allergies_list if a in ing]
-                            if matched:
-                                print(f"   [후처리] 알레르기 재료 제거됨: '{ing}' (알레르기: {matched})")
-                            else:
-                                filtered_ings.append(ing)
-                        ingredients_text = ', '.join(filtered_ings)
-
-                    # 재구성 (조리도구 섹션 유지)
-                    if cooking_tools_line:
-                        cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}\n{cooking_tools_line}"
-                    else:
-                        cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
-                    print(f"   [후처리] 재료 형식 정리됨 (조리도구: {'있음' if cooking_tools_line else '없음'})")
-
-            # 문서 메타데이터에서 실제 조리도구 목록 수집
-            # (DB 문서는 Neo4j에서, 웹 검색 문서는 cooking_tools 없음)
+            # DB 문서의 실제 조리도구 (LLM 환각 방지용)
             doc_tools = []
             for doc in documents:
                 tools = doc.metadata.get("cooking_tools", [])
                 if tools:
                     doc_tools = tools
-                    break  # 첫 번째 유효한 도구 목록 사용
+                    break
 
-            if '조리도구' in cleaned_answer:
-                if not doc_tools:
-                    # 메타데이터에 조리도구 없음 → LLM이 임의로 넣은 것 → 제거
-                    cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}\s*:.*?(?=\n|$)', '', cleaned_answer, flags=re.MULTILINE)
-                    cleaned_answer = cleaned_answer.strip()
-                    print(f"   [후처리] 조리도구 제거됨 (메타데이터 없음 - LLM 환각)")
+            allergies_list = user_constraints.get("allergies", []) if user_constraints else []
+
+            try:
+                recipe = toon_decode(cleaned_raw)
+
+                r_title     = recipe.get("title", "")
+                r_cook_time = recipe.get("cook_time", "")
+                r_level     = recipe.get("level", "")
+                r_servings  = recipe.get("servings", f"{servings}인분")
+                r_intro     = recipe.get("intro", "")
+                r_ings      = recipe.get("ingredients", [])
+                r_tools     = recipe.get("cooking_tools", "")
+
+                # 알레르기 재료 필터링
+                if allergies_list and isinstance(r_ings, list):
+                    filtered = []
+                    for ing in r_ings:
+                        name = ing.get("name", "")
+                        matched = [a for a in allergies_list if a in name]
+                        if matched:
+                            print(f"   [후처리] 알레르기 재료 제거됨: '{name}' (알레르기: {matched})")
+                        else:
+                            filtered.append(ing)
+                    r_ings = filtered
+
+                # intro 마침표 보장
+                if r_intro and not r_intro.endswith('.'):
+                    r_intro += '.'
+
+                # ingredients → 텍스트
+                if isinstance(r_ings, list):
+                    ings_str = ", ".join(
+                        f"{i.get('name', '')} {i.get('amount', '')}".strip()
+                        for i in r_ings if i.get('name')
+                    )
                 else:
-                    # 빈 조리도구 라인만 제거 (값 있는 경우 유지)
-                    cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}\s*:\s*(?:\n|$)', '', cleaned_answer)
-                    cleaned_answer = cleaned_answer.strip()
-            else:
-                # 조리도구 누락 시 메타데이터에서 보완
+                    ings_str = str(r_ings)
+
+                # 마크다운 조합
+                meta_parts = []
+                if r_cook_time:
+                    meta_parts.append(f"⏱️ {r_cook_time}")
+                if r_level:
+                    meta_parts.append(f"📊 {r_level}")
+                meta_parts.append(f"👥 {r_servings}")
+
+                out_parts = [
+                    f"**[{r_title}]**" if r_title else "**[레시피]**",
+                    " | ".join(meta_parts),
+                ]
+                if r_intro:
+                    out_parts.append(f"**소개:** {r_intro}")
+                if ings_str:
+                    out_parts.append(f"**재료:** {ings_str}")
+                # 조리도구: DB 메타데이터에 있을 때만 출력 (LLM 환각 방지)
                 if doc_tools:
-                    tools_str = ", ".join(doc_tools)
-                    cleaned_answer = f"{cleaned_answer}\n**조리도구:** {tools_str}"
-                    print(f"   [후처리] 조리도구 보완됨 (메타데이터): {tools_str}")
+                    out_parts.append(f"**조리도구:** {r_tools if r_tools else ', '.join(doc_tools)}")
+
+                cleaned_answer = "\n".join(out_parts)
+                print(f"   [TOON 파싱 성공]")
+
+            except Exception as toon_err:
+                print(f"   [TOON 파싱 실패: {toon_err}] → regex fallback")
+                cleaned_answer = answer
+
+                # 조리법 섹션 제거
+                for pattern in [r'\n조리법[\s:：]+.*', r'\n\*\*조리법\*\*[\s:：]+.*']:
+                    match = re.search(pattern, cleaned_answer, re.DOTALL | re.IGNORECASE)
+                    if match:
+                        cleaned_answer = cleaned_answer[:match.start()].strip()
+                        print(f"   [후처리] 조리법 제거됨")
+                        break
+
+                # 알레르기 텍스트 제거
+                for pattern in [r'\*알레르기.*?\n', r'알레르기 재료.*?\n', r'비선호 음식.*?\n']:
+                    cleaned_answer = re.sub(pattern, '', cleaned_answer, flags=re.IGNORECASE)
+
+                # 볼드 통일
+                if re.search(r'소개\s*:', cleaned_answer) and '**소개:**' not in cleaned_answer:
+                    cleaned_answer = re.sub(r'(?<!\*)소개\s*:\s*', '**소개:** ', cleaned_answer, count=1)
+                if re.search(r'재료\s*:', cleaned_answer) and '**재료:**' not in cleaned_answer:
+                    cleaned_answer = re.sub(r'(?<!\*)재료\s*:\s*', '**재료:** ', cleaned_answer, count=1)
+
+                # 소개 정제
+                if '**소개:**' in cleaned_answer:
+                    intro_match = re.search(r'\*\*소개:\*\*\s*(.+)', cleaned_answer)
+                    if intro_match:
+                        intro_text = intro_match.group(1).strip()
+                        intro_text = re.sub(r'[ᄀ-ᄒ]{2,}', '', intro_text)
+                        intro_text = re.sub(r'[:;]\)|:\(|:\)|^^|ㅎㅎ|ㅋㅋ', '', intro_text)
+                        for phrase in [r'알려드릴게요[!\s]*', r'드릴게요[!\s]*', r'[~]+',
+                                       r'답니다[:\s]*\)', r'레시피를 알려드릴게요', r'소개해드릴게요']:
+                            intro_text = re.sub(phrase, '', intro_text)
+                        intro_text = re.sub(r'\s+', ' ', intro_text).strip()
+                        if intro_text and not intro_text.endswith('.'):
+                            intro_text += '.'
+                        cleaned_answer = re.sub(r'\*\*소개:\*\*\s*.+', f'**소개:** {intro_text}',
+                                                cleaned_answer, count=1)
+                        print(f"   [후처리] 소개 정제됨: {intro_text[:50]}...")
+
+                # 재료 형식 정리
+                if '**재료:**' in cleaned_answer:
+                    parts = cleaned_answer.split('**재료:**')
+                    if len(parts) == 2:
+                        before_ingredients = parts[0]
+                        ingredients_section = parts[1].strip()
+                        ingredients_lines = []
+                        cooking_tools_line = ""
+                        for line in ingredients_section.split('\n'):
+                            line = line.strip()
+                            if re.match(r'\*{0,2}조리도구\*{0,2}\s*:', line):
+                                content = re.split(r'\s*:\s*', line, maxsplit=1)
+                                if len(content) > 1 and content[1].strip():
+                                    cooking_tools_line = line
+                                break
+                            elif line and not line.startswith('**'):
+                                line = re.sub(r'^[-\*]\s*', '', line)
+                                if line:
+                                    ingredients_lines.append(line)
+                            elif line.startswith('**'):
+                                break
+                        ingredients_text = ', '.join(ingredients_lines)
+                        if allergies_list:
+                            individual_ings = [ing.strip() for ing in ingredients_text.split(',') if ing.strip()]
+                            ingredients_text = ', '.join(
+                                ing for ing in individual_ings
+                                if not any(a in ing for a in allergies_list)
+                            )
+                        if cooking_tools_line:
+                            cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}\n{cooking_tools_line}"
+                        else:
+                            cleaned_answer = f"{before_ingredients}**재료:** {ingredients_text}"
+                        print(f"   [후처리] 재료 형식 정리됨 (조리도구: {'있음' if cooking_tools_line else '없음'})")
+
+                # 조리도구 처리
+                if '조리도구' in cleaned_answer:
+                    if not doc_tools:
+                        cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}\s*:.*?(?=\n|$)', '',
+                                                cleaned_answer, flags=re.MULTILINE)
+                        cleaned_answer = cleaned_answer.strip()
+                        print(f"   [후처리] 조리도구 제거됨 (메타데이터 없음 - LLM 환각)")
+                    else:
+                        cleaned_answer = re.sub(r'\n?\*{0,2}조리도구\*{0,2}\s*:\s*(?:\n|$)', '', cleaned_answer)
+                        cleaned_answer = cleaned_answer.strip()
+                else:
+                    if doc_tools:
+                        cleaned_answer = f"{cleaned_answer}\n**조리도구:** {', '.join(doc_tools)}"
+                        print(f"   [후처리] 조리도구 보완됨 (메타데이터): {', '.join(doc_tools)}")
 
             print(f"   생성 완료: {cleaned_answer[:50]}...")
             return {"generation": cleaned_answer}

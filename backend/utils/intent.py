@@ -487,6 +487,13 @@ def detect_chat_intent(text: str, chat_history: list = None) -> str:
         result = llm.invoke([HumanMessage(content=prompt)])
         decision = result.content.strip().upper().replace(" ", "")
 
+        # 토큰 사용량 추적 (agent.py의 _node_tokens 업데이트)
+        try:
+            from features.chat.agent import print_token_usage as _agent_token_usage
+            _agent_token_usage(result, "Intent 분류")
+        except Exception:
+            pass
+
         print(f"[Intent] 입력: {text}")
         print(f"[Intent] 레시피 존재: {has_recipe}")
         print(f"[Intent] LLM 응답: {decision}")

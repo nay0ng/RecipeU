@@ -879,7 +879,9 @@ async def chat_websocket(
                 })
 
                 # 의도 분류
+                _intent_t0 = time.time()
                 user_intent = detect_chat_intent(content, chat_sessions[session_id]["messages"])
+                _node_timings["intent"] = (time.time() - _intent_t0) * 1000
                 logger.info(f"[WS] 의도 분류: {user_intent}")
 
                 # 알러지/비선호 감지 (회원만, 레시피 검색/수정이 아닐 때만)

@@ -210,6 +210,7 @@ def create_chat_agent(rag_system):
 
         question = state["question"]
         history = state.get("chat_history", [])
+        user_constraints = state.get("user_constraints", {})
 
         formatted_history = "\n".join(history[-5:]) if isinstance(history, list) else str(history)
 
@@ -231,6 +232,24 @@ def create_chat_agent(rag_system):
             if len(better_question) > len(question) * 3 or any(kw in better_question for kw in ["확인되지", "않습니다", "말씀하신", "궁금하신"]):
                 print(f"   재작성 결과 이상 → 원본 사용")
                 better_question = question
+
+            # 알레르기/비선호 키워드를 재작성된 쿼리에서 제거
+            # (grade_documents와 web_search가 필터링된 쿼리를 기준으로 동작하게 함)
+            allergies = user_constraints.get("allergies", []) or []
+            dislikes = user_constraints.get("dislikes", []) or []
+            excluded_terms = allergies + dislikes
+
+            if excluded_terms:
+                filtered_question = better_question
+                for term in excluded_terms:
+                    filtered_question = filtered_question.replace(term, "").strip()
+                # 필터링 후 공백 정리
+                import re as _re
+                filtered_question = _re.sub(r'\s+', ' ', filtered_question).strip()
+                if filtered_question:
+                    if filtered_question != better_question:
+                        print(f"   알레르기/비선호 제거: '{better_question}' → '{filtered_question}'")
+                    better_question = filtered_question
 
             return {
                 "question": better_question,
@@ -281,18 +300,20 @@ def create_chat_agent(rag_system):
     def check_constraints(state: ChatAgentState) -> ChatAgentState:
         """제약 조건 체크 (알레르기, 비선호 음식)"""
         print("[Agent] 제약 조건 체크 중...")
-        
-        question = state["question"]
+
+        # original_question 기준으로 확인: rewrite 후 필터링된 question은 이미 알레르기 제거됨
+        # 사용자가 알레르기 재료를 명시적으로 요청했는지는 원본 질문으로 판단해야 함
+        original_question = state.get("original_question") or state["question"]
         user_constraints = state.get("user_constraints", {})
-        
+
         if not user_constraints:
             print("   제약 조건 없음 → 스킵")
             return {"constraint_warning": ""}
-        
+
         dislikes = user_constraints.get("dislikes", [])
         allergies = user_constraints.get("allergies", [])
-        
-        question_lower = question.lower()
+
+        question_lower = original_question.lower()
         warning_parts = []
 
         import re

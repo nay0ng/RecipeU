@@ -523,7 +523,6 @@ export default function ChatPage() {
           },
         ]);
         setIsThinking(false);
-        setHasRecipeGenerated(false);
       } else if (data.type === "safety_block") {
         // AI Safety 차단 메시지
         setMessages((prev) => [

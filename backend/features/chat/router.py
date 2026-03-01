@@ -1030,7 +1030,6 @@ async def chat_websocket(
                     dislike_trigger_keywords = ["싫어", "안먹어"]
                     if any(k in content for k in dislike_trigger_keywords):
                         try:
-                            from utils.intent import extract_allergy_dislike
                             dislike_data = extract_allergy_dislike(content, chat_history=None)
                             if dislike_data.get("type") == "dislike" and dislike_data.get("items"):
                                 new_dislikes = dislike_data["items"]

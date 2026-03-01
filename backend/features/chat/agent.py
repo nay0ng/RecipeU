@@ -619,7 +619,71 @@ def create_chat_agent(rag_system):
             print(f"\n[DEBUG] LLM 원본 응답:\n{answer}\n[/DEBUG]\n")
 
             import re
-            from toon_format import decode as toon_decode
+
+            def _parse_toon(text: str) -> dict:
+                """TOON 텍스트 → dict. 두 가지 ingredients 포맷 지원:
+                  - 다중 줄: 재료명,양 (한 줄에 하나)
+                  - 단일 줄: 재료명 양, 재료명 양, ... (모두 한 줄)
+                """
+                data: dict = {
+                    "title": "", "cook_time": "", "level": "",
+                    "servings": "", "intro": "", "ingredients": [],
+                    "cooking_tools": "",
+                }
+                mode = None
+
+                for raw in text.splitlines():
+                    line = raw.strip()
+                    if not line:
+                        continue
+
+                    # ingredients 섹션 헤더 (ingredients[N]{...}: 또는 ingredients{...}: 모두 허용)
+                    if re.match(r'^ingredients[\s\[\{:]', line, re.IGNORECASE):
+                        mode = "ingredients"
+                        inline = line.split(":", 1)[1].strip() if ":" in line else ""
+                        if inline:
+                            # 단일 줄 포맷: "재료명 양, 재료명 양, ..."
+                            for token in re.split(r",\s*", inline):
+                                parts = token.strip().split(None, 1)
+                                if parts:
+                                    data["ingredients"].append({
+                                        "name": parts[0],
+                                        "amount": parts[1] if len(parts) > 1 else "",
+                                        "note": "",
+                                    })
+                        continue
+
+                    # key: value 형태 (섹션 헤더)
+                    if re.match(r'^\w+\s*:', line):
+                        mode = None
+                        key, val = line.split(":", 1)
+                        key = key.strip()
+                        val = val.strip()
+                        if key in data:
+                            data[key] = val
+                        continue
+
+                    # ingredients 다중 줄 포맷: "재료명,양" 또는 "재료명 양"
+                    if mode == "ingredients":
+                        item = line.lstrip("-* ").strip()
+                        if not item:
+                            continue
+                        if "," in item:
+                            parts = [p.strip() for p in item.split(",", 2)]
+                            data["ingredients"].append({
+                                "name": parts[0],
+                                "amount": parts[1] if len(parts) > 1 else "",
+                                "note": parts[2] if len(parts) > 2 else "",
+                            })
+                        else:
+                            parts = item.split(None, 1)
+                            data["ingredients"].append({
+                                "name": parts[0],
+                                "amount": parts[1] if len(parts) > 1 else "",
+                                "note": "",
+                            })
+
+                return data
 
             # TOON 코드블록·접두어 제거
             cleaned_raw = re.sub(r'```(?:toon)?\n?', '', answer)
@@ -638,7 +702,7 @@ def create_chat_agent(rag_system):
             allergies_list = user_constraints.get("allergies", []) if user_constraints else []
 
             try:
-                recipe = toon_decode(cleaned_raw)
+                recipe = _parse_toon(cleaned_raw)
 
                 r_title     = recipe.get("title", "")
                 r_cook_time = recipe.get("cook_time", "")

@@ -457,13 +457,16 @@ def create_chat_agent(rag_system):
     def generate(state: ChatAgentState) -> ChatAgentState:
         """답변 생성"""
         print("[Agent] 답변 생성 중...")
-        
-        question = state["original_question"]
+
+        # 검색/grade에 사용된 필터링 쿼리를 사용 (original_question 대신)
+        # original_question("새우볶음밥")은 컨텍스트("햄볶음밥" 등)와 불일치하여
+        # LLM이 컨텍스트를 무시하고 임의 레시피를 생성하는 원인이 됨
+        question = state.get("question") or state["original_question"]
         documents = state["documents"]
         history = state.get("chat_history", [])
         constraint_warning = state.get("constraint_warning", "")
         user_constraints = state.get("user_constraints", {})
-        
+
         formatted_history = "\n".join(history[-10:]) if isinstance(history, list) else str(history)
 
         # 컨텍스트 구성: 제목을 명시하여 LLM이 어떤 레시피인지 파악할 수 있게 함
@@ -476,11 +479,11 @@ def create_chat_agent(rag_system):
             else:
                 context_parts.append(content)
         context_text = "\n\n".join(context_parts)
-        
+
         # constraint_warning이 있어도 생성을 차단하지 않음
         # Neo4j가 이미 DB 레벨에서 알레르기 재료를 필터링했으므로 계속 진행
         # (경고 내용은 enhanced_question에 포함되어 LLM에게 전달됨)
-        
+
         try:
             # 제약 조건을 질문에 통합 (컨텍스트가 아닌 질문에 포함)
             enhanced_question = question

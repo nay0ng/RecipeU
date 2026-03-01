@@ -663,12 +663,24 @@ def create_chat_agent(rag_system):
                             data[key] = val
                         continue
 
-                    # ingredients 다중 줄 포맷: "재료명,양" 또는 "재료명 양"
+                    # ingredients 다중 줄 포맷
                     if mode == "ingredients":
                         item = line.lstrip("-* ").strip()
                         if not item:
                             continue
-                        if "," in item:
+                        first_token = item.split(",")[0].strip()
+                        if "," in item and " " in first_token:
+                            # 한 줄 나열 포맷: "재료명 양, 재료명 양, ..."
+                            for token in re.split(r",\s*", item):
+                                parts = token.strip().split(None, 1)
+                                if parts:
+                                    data["ingredients"].append({
+                                        "name": parts[0],
+                                        "amount": parts[1] if len(parts) > 1 else "",
+                                        "note": "",
+                                    })
+                        elif "," in item:
+                            # 쉼표 구분 포맷: "재료명,양[,note]"
                             parts = [p.strip() for p in item.split(",", 2)]
                             data["ingredients"].append({
                                 "name": parts[0],

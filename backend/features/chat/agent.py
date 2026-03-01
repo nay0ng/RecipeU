@@ -466,11 +466,16 @@ def create_chat_agent(rag_system):
         
         formatted_history = "\n".join(history[-10:]) if isinstance(history, list) else str(history)
 
-        # 웹 검색 결과는 이미 요약되어 있으므로 전체 사용, DB 검색 결과는 800자로 제한
-        context_text = "\n\n".join([
-            doc.page_content if len(doc.page_content) < 1000 else doc.page_content[:800]
-            for doc in documents
-        ])
+        # 컨텍스트 구성: 제목을 명시하여 LLM이 어떤 레시피인지 파악할 수 있게 함
+        context_parts = []
+        for doc in documents:
+            title = doc.metadata.get("title", "")
+            content = doc.page_content if len(doc.page_content) < 1000 else doc.page_content[:800]
+            if title:
+                context_parts.append(f"[레시피: {title}]\n{content}")
+            else:
+                context_parts.append(content)
+        context_text = "\n\n".join(context_parts)
         
         # constraint_warning이 있어도 생성을 차단하지 않음
         # Neo4j가 이미 DB 레벨에서 알레르기 재료를 필터링했으므로 계속 진행

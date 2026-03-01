@@ -1,12 +1,11 @@
 """
 services/rag_neo4j_option_b.py
-[옵션 B] 1단계 LLM 접근: 사용자 쿼리 → 바로 Cypher 생성 → Neo4j 실행
+[옵션 B] 키워드 기반 Cypher 직접 조합: 사용자 쿼리 → 코드로 Cypher 조합 → Neo4j 실행
 
 흐름:
-  1. LLM 호출 #1: 사용자 쿼리에서 직접 Cypher 생성
-     (오타/구어체 보정 + Cypher 생성을 프롬프트 하나로 처리)
-  2. Neo4j에서 Cypher 실행
-  3. Cypher 실패 시 → 키워드 검색 폴백
+  1. 쿼리 문자열에서 키워드 목록 파싱 (쉼표 구분)
+  2. 코드로 Cypher 조합 (title OR 검색 + 알레르기/도구 필터 확정 삽입)
+  3. Neo4j 실행 → 부족하면 재료명 OR 검색으로 보완
 
 비교 대상: rag_neo4j_option_a.py (2단계: Rewrite → Cypher)
 """
@@ -14,7 +13,6 @@ services/rag_neo4j_option_b.py
 import json
 import os
 import http.client
-import re
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
@@ -131,94 +129,63 @@ class RecipeRAGLangChain:
             print(f"[OK] Neo4j 연결 성공 (레시피 {count:,}개)")
 
         print("\n" + "="*60)
-        print("시스템 초기화 완료 [옵션 B: 1단계 LLM]")
+        print("시스템 초기화 완료 [옵션 B: 코드 Cypher 조합]")
         print("="*60 + "\n")
 
     # ─────────────────────────────────────────────
-    # 1단계 전부: 쿼리 → Cypher 직접 생성 (LLM 호출 #1)
+    # 키워드 파싱 + Cypher 코드 조합
     # ─────────────────────────────────────────────
-    def _generate_cypher_direct(
+    def _parse_keywords(self, query: str) -> List[str]:
+        """쿼리 문자열에서 키워드 목록 추출 (쉼표 구분)"""
+        if ',' in query:
+            return [kw.strip() for kw in query.split(',') if kw.strip()]
+        return [query.strip()]
+
+    def _build_cypher(
         self,
-        user_query: str,
+        keywords: List[str],
         allergies: List[str],
         user_tools: List[str],
         k: int,
+        ingredient_search: bool = False,
     ) -> str:
-        """사용자 쿼리에서 오타/구어체 보정 + Cypher 생성을 한 번에 처리"""
-        t_start = _t()
+        """키워드 목록 + 필터 조건으로 Cypher 직접 조합 (LLM 없이)"""
+        safe = [kw.replace("'", "\\'") for kw in keywords]
 
-        allergy_info = f"{allergies}" if allergies else "없음"
-        tool_info = f"{user_tools}" if user_tools else "제한 없음"
+        if ingredient_search:
+            match_clause = "MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)"
+            kw_parts = [f"i.name CONTAINS '{kw}'" for kw in safe]
+        else:
+            match_clause = "MATCH (r:Recipe)"
+            kw_parts = [f"r.title CONTAINS '{kw}'" for kw in safe]
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""당신은 Neo4j Cypher 전문가이자 한국 요리 검색 전문가입니다.
-사용자 입력을 이해하여 적절한 Cypher 쿼리를 직접 생성하세요.
+        conditions = [f"({' OR '.join(kw_parts)})"]
 
-## Neo4j 스키마
-- (Recipe) 노드: id, title, intro, cook_time, level, author, detail_url, image, steps, cooking_tools(리스트)
-- (Ingredient) 노드: name
-- 관계: (Recipe)-[:CONTAINS]->(Ingredient)
+        for allergy in allergies:
+            safe_allergy = allergy.replace('"', '\\"')
+            conditions.append(f'NOT (r)-[:CONTAINS]->(:Ingredient {{name: "{safe_allergy}"}})')
 
-## 제약사항
-- 알레르기 제외 재료: {allergy_info}
-- 사용 가능한 도구: {tool_info}
+        if user_tools:
+            tools_json = json.dumps(user_tools, ensure_ascii=False)
+            conditions.append(f"ALL(t IN r.cooking_tools WHERE t IN {tools_json})")
 
-## 필수 RETURN 필드 (정확히 이 형식으로)
-{self._REQUIRED_RETURN}
+        where_clause = "\n  AND ".join(conditions)
 
-## Cypher 생성 규칙
-1. 오타/구어체를 표준 한국어 요리명/재료명으로 자동 보정하여 검색
-   예) "돼지고기볶음" → "돼지고기 볶음", "에어프라이기" → "에어프라이어"
-2. 제목 매칭: 반드시 r.title CONTAINS '키워드' 사용 (exact match 절대 금지)
-   제목 매칭 어려우면 재료명 매칭: MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient) WHERE i.name CONTAINS '키워드'
-3. 알레르기 재료 있으면: AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "재료명"}}}}) 조건 추가
-4. 사용자 도구 제한 있으면: AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools or [], ensure_ascii=False)}) 조건 추가
-5. LIMIT {k}
-6. Cypher 쿼리만 출력 (설명/마크다운/코드블록 없이, SELECT/WITH AS 같은 SQL 문법 절대 금지)
-   [중요] ANY()/ALL() 사용 시 선언한 변수명과 사용하는 변수명 반드시 동일하게 작성
-   올바른 예: ALL(t IN r.cooking_tools WHERE t IN ["에어프라이어"]) ← t로 통일
-   잘못된 예: ALL(tool IN r.cooking_tools WHERE t IN [...]) ← tool/t 불일치 (SyntaxError 발생)
-7. [중요] 요청 요리명에 알레르기 재료가 포함된 경우(예: 요청="새우볶음밥", 알레르기=["새우"]):
-   - 해당 알레르기 재료를 제외하고 상위 카테고리 키워드로 검색
-   - 예: "새우볶음밥" → "볶음밥"으로 CONTAINS 검색 + 새우 알레르기 필터
-   - 알레르기 재료명이 포함된 요리명(예: '새우볶음밥')으로 title CONTAINS 절대 사용 금지
-
-## 올바른 Cypher 예시 (이 형식만 사용)
-예시1 - 제목 검색 + 알레르기 필터 + 도구 필터:
-MATCH (r:Recipe)
-WHERE r.title CONTAINS '볶음밥'
-  AND NOT (r)-[:CONTAINS]->(:Ingredient {{{{name: "새우"}}}})
-  AND ALL(t IN r.cooking_tools WHERE t IN ["밥솥", "전자레인지"])
-RETURN r.id AS recipe_id, r.title AS title, r.intro AS intro,
-       r.cook_time AS cook_time, r.level AS level, r.author AS author,
-       r.detail_url AS source, r.image AS image, r.steps AS steps,
-       r.cooking_tools AS cooking_tools
-LIMIT 3
-
-예시2 - 재료명 검색:
-MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)
-WHERE i.name CONTAINS '두부'
-  AND ALL(t IN r.cooking_tools WHERE t IN ["에어프라이어"])
-RETURN r.id AS recipe_id, r.title AS title, r.intro AS intro,
-       r.cook_time AS cook_time, r.level AS level, r.author AS author,
-       r.detail_url AS source, r.image AS image, r.steps AS steps,
-       r.cooking_tools AS cooking_tools
-LIMIT 3"""),
-            ("human", "사용자 입력: {query}")
-        ])
-
-        chain = prompt | self.chat_model
-        result = chain.invoke({"query": user_query})
-        cypher = result.content.strip()
-
-        # 마크다운 코드블록 제거
-        cypher = re.sub(r'^```(?:cypher)?\n?', '', cypher)
-        cypher = re.sub(r'\n?```$', '', cypher)
-        cypher = cypher.strip()
-
-        _log_step("LLM 호출 #1 (Direct Cypher 생성)", t_start, _t())
-        print(f"  🔧 [생성된 Cypher]\n{cypher}")
-        return cypher
+        if ingredient_search:
+            return (
+                f"{match_clause}\n"
+                f"WHERE {where_clause}\n"
+                f"WITH r, count(i) AS match_count\n"
+                f"ORDER BY match_count DESC\n"
+                f"RETURN {self._REQUIRED_RETURN}\n"
+                f"LIMIT {k}"
+            )
+        return (
+            f"{match_clause}\n"
+            f"WHERE {where_clause}\n"
+            f"RETURN {self._REQUIRED_RETURN}\n"
+            f"LIMIT {k}"
+        )
 
     # ─────────────────────────────────────────────
     # Neo4j 실행 (+ 키워드 폴백)
@@ -234,10 +201,10 @@ LIMIT 3"""),
         allergies = allergies or []
         user_tools = user_tools or []
 
-        # ── 1단계: 바로 Cypher 생성 ──
-        cypher = self._generate_cypher_direct(query, allergies, user_tools, k)
+        keywords = self._parse_keywords(query)
+        cypher = self._build_cypher(keywords, allergies, user_tools, k)
+        print(f"  🔧 [생성된 Cypher]\n{cypher}")
 
-        # ── 2단계: Cypher 실행 ──
         results = []
         seen_ids = set()
 
@@ -257,76 +224,39 @@ LIMIT 3"""),
                 if attempt == 0 and is_ssl_err:
                     print(f"  [WARNING] Cypher 실행 실패 (SSL/연결 오류): {e}")
                     self._reconnect_neo4j()
-                    results = []  # 재시도 전 초기화
+                    results = []
                 else:
                     print(f"  [WARNING] Cypher 실행 실패: {e}")
-                    print(f"  [FALLBACK] 키워드 검색으로 전환")
-                    results = self._keyword_fallback(query, k, allergies, user_tools, seen_ids)
+                    print(f"  [FALLBACK] 재료명 검색으로 전환")
+                    results = self._keyword_fallback(keywords, k, allergies, user_tools, seen_ids)
                     break
 
-        # 부족하면 키워드 폴백으로 보완
+        # 부족하면 재료명 검색으로 보완
         if len(results) < k:
-            extra = self._keyword_fallback(query, k - len(results), allergies, user_tools, seen_ids)
+            extra = self._keyword_fallback(keywords, k - len(results), allergies, user_tools, seen_ids)
             results.extend(extra)
 
-        _log_step("Neo4j 검색 합계 (1단계 LLM)", t_start, _t())
+        _log_step("Neo4j 검색 합계 (코드 Cypher)", t_start, _t())
         return results
 
     def _keyword_fallback(
         self,
-        query: str,
+        keywords: List[str],
         k: int,
         allergies: List[str],
         user_tools: List[str],
         seen_ids: set,
     ) -> List[tuple]:
-        """LLM Cypher 실패 시 키워드 기반 검색으로 폴백"""
+        """title 검색 결과 부족 시 재료명 OR 검색으로 보완"""
         results = []
-
-        allergy_clause = ""
-        if allergies:
-            conditions = " AND ".join(
-                [f'NOT (r)-[:CONTAINS]->(:Ingredient {{name: "{a}"}})' for a in allergies]
-            )
-            allergy_clause = f"AND {conditions}"
-
-        tool_clause = ""
-        if user_tools:
-            tool_clause = f"AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools, ensure_ascii=False)})"
-
         try:
+            ing_cypher = self._build_cypher(keywords, allergies, user_tools, k, ingredient_search=True)
             with self.neo4j_driver.session() as session:
-                title_query = f"""
-                    MATCH (r:Recipe)
-                    WHERE r.title CONTAINS $query
-                    {allergy_clause}
-                    {tool_clause}
-                    RETURN {self._REQUIRED_RETURN}
-                    LIMIT $k
-                """
-                for record in session.run(title_query, {"query": query, "k": k}):
+                for record in session.run(ing_cypher):
                     rid = record["recipe_id"]
                     if rid not in seen_ids:
                         seen_ids.add(rid)
-                        results.append((self._record_to_document(record), 0.0))
-
-                if len(results) < k:
-                    remaining = k - len(results)
-                    ing_query = f"""
-                        MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)
-                        WHERE i.name CONTAINS $query
-                        {allergy_clause}
-                        {tool_clause}
-                        WITH r, count(i) AS match_count
-                        ORDER BY match_count DESC
-                        RETURN {self._REQUIRED_RETURN}
-                        LIMIT $remaining
-                    """
-                    for record in session.run(ing_query, {"query": query, "remaining": remaining}):
-                        rid = record["recipe_id"]
-                        if rid not in seen_ids:
-                            seen_ids.add(rid)
-                            results.append((self._record_to_document(record), 1.0))
+                        results.append((self._record_to_document(record), 1.0))
         except Exception as e:
             print(f"  [WARNING] 폴백 검색 실패: {e}")
 

@@ -123,10 +123,9 @@ class RecipeRAGLangChain:
                 self.use_reranker = False
 
         print("\n[3/3] Neo4j 연결 중")
-        self.neo4j_driver = GraphDatabase.driver(
-            os.getenv("NEO4J_URI"),
-            auth=(os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD"))
-        )
+        self._neo4j_uri = os.getenv("NEO4J_URI")
+        self._neo4j_auth = (os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD"))
+        self.neo4j_driver = GraphDatabase.driver(self._neo4j_uri, auth=self._neo4j_auth)
         with self.neo4j_driver.session() as session:
             count = session.run("MATCH (r:Recipe) RETURN count(r) AS cnt").single()["cnt"]
             print(f"[OK] Neo4j 연결 성공 (레시피 {count:,}개)")
@@ -242,19 +241,28 @@ LIMIT 3"""),
         results = []
         seen_ids = set()
 
-        try:
-            with self.neo4j_driver.session() as session:
-                records = session.run(cypher)
-                for record in records:
-                    rid = record["recipe_id"]
-                    if rid not in seen_ids:
-                        seen_ids.add(rid)
-                        results.append((self._record_to_document(record), 0.0))
-            print(f"  ✅ [Cypher 실행 성공] {len(results)}개")
-        except Exception as e:
-            print(f"  [WARNING] Cypher 실행 실패: {e}")
-            print(f"  [FALLBACK] 키워드 검색으로 전환")
-            results = self._keyword_fallback(query, k, allergies, user_tools, seen_ids)
+        for attempt in range(2):
+            try:
+                with self.neo4j_driver.session() as session:
+                    records = session.run(cypher)
+                    for record in records:
+                        rid = record["recipe_id"]
+                        if rid not in seen_ids:
+                            seen_ids.add(rid)
+                            results.append((self._record_to_document(record), 0.0))
+                print(f"  ✅ [Cypher 실행 성공] {len(results)}개")
+                break
+            except Exception as e:
+                is_ssl_err = "SSL" in str(e) or "EOF" in str(e) or "connection" in str(e).lower()
+                if attempt == 0 and is_ssl_err:
+                    print(f"  [WARNING] Cypher 실행 실패 (SSL/연결 오류): {e}")
+                    self._reconnect_neo4j()
+                    results = []  # 재시도 전 초기화
+                else:
+                    print(f"  [WARNING] Cypher 실행 실패: {e}")
+                    print(f"  [FALLBACK] 키워드 검색으로 전환")
+                    results = self._keyword_fallback(query, k, allergies, user_tools, seen_ids)
+                    break
 
         # 부족하면 키워드 폴백으로 보완
         if len(results) < k:
@@ -286,38 +294,41 @@ LIMIT 3"""),
         if user_tools:
             tool_clause = f"AND ALL(tool IN r.cooking_tools WHERE tool IN {json.dumps(user_tools, ensure_ascii=False)})"
 
-        with self.neo4j_driver.session() as session:
-            title_query = f"""
-                MATCH (r:Recipe)
-                WHERE r.title CONTAINS $query
-                {allergy_clause}
-                {tool_clause}
-                RETURN {self._REQUIRED_RETURN}
-                LIMIT $k
-            """
-            for record in session.run(title_query, {"query": query, "k": k}):
-                rid = record["recipe_id"]
-                if rid not in seen_ids:
-                    seen_ids.add(rid)
-                    results.append((self._record_to_document(record), 0.0))
-
-            if len(results) < k:
-                remaining = k - len(results)
-                ing_query = f"""
-                    MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)
-                    WHERE i.name CONTAINS $query
+        try:
+            with self.neo4j_driver.session() as session:
+                title_query = f"""
+                    MATCH (r:Recipe)
+                    WHERE r.title CONTAINS $query
                     {allergy_clause}
                     {tool_clause}
-                    WITH r, count(i) AS match_count
-                    ORDER BY match_count DESC
                     RETURN {self._REQUIRED_RETURN}
-                    LIMIT $remaining
+                    LIMIT $k
                 """
-                for record in session.run(ing_query, {"query": query, "remaining": remaining}):
+                for record in session.run(title_query, {"query": query, "k": k}):
                     rid = record["recipe_id"]
                     if rid not in seen_ids:
                         seen_ids.add(rid)
-                        results.append((self._record_to_document(record), 1.0))
+                        results.append((self._record_to_document(record), 0.0))
+
+                if len(results) < k:
+                    remaining = k - len(results)
+                    ing_query = f"""
+                        MATCH (r:Recipe)-[:CONTAINS]->(i:Ingredient)
+                        WHERE i.name CONTAINS $query
+                        {allergy_clause}
+                        {tool_clause}
+                        WITH r, count(i) AS match_count
+                        ORDER BY match_count DESC
+                        RETURN {self._REQUIRED_RETURN}
+                        LIMIT $remaining
+                    """
+                    for record in session.run(ing_query, {"query": query, "remaining": remaining}):
+                        rid = record["recipe_id"]
+                        if rid not in seen_ids:
+                            seen_ids.add(rid)
+                            results.append((self._record_to_document(record), 1.0))
+        except Exception as e:
+            print(f"  [WARNING] 폴백 검색 실패: {e}")
 
         print(f"  🔄 [폴백] {len(results)}개")
         return results
@@ -328,7 +339,10 @@ LIMIT 3"""),
         steps = record["steps"] or ""
         tools = record["cooking_tools"] or []
         tools_str = ", ".join(tools) if tools else ""
-        page_content = f"{title}\n{intro}\n조리도구: {tools_str}\n\n{steps}"
+        if tools_str:
+            page_content = f"{title}\n{intro}\n조리도구: {tools_str}\n\n{steps}"
+        else:
+            page_content = f"{title}\n{intro}\n\n{steps}"
         return Document(
             page_content=page_content,
             metadata={
@@ -596,6 +610,17 @@ LIMIT 3"""),
         _log_step("query() 전체 합계", t_query_start, _t())
         print(f"{'='*50}\n")
         return result
+
+    def _reconnect_neo4j(self):
+        """Neo4j 드라이버 재연결 (Aura 유휴 후 SSL 끊김 복구용)"""
+        try:
+            if self.neo4j_driver:
+                self.neo4j_driver.close()
+        except Exception:
+            pass
+        print("  [Neo4j] 드라이버 재연결 중...")
+        self.neo4j_driver = GraphDatabase.driver(self._neo4j_uri, auth=self._neo4j_auth)
+        print("  [Neo4j] 재연결 완료")
 
     def close(self):
         if self.neo4j_driver:

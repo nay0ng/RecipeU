@@ -12,7 +12,7 @@ from langchain_naver import ChatClovaX
 
 from core.websocket import manager
 from core.dependencies import get_rag_system
-from features.chat.agent import create_chat_agent, _node_timings
+from features.chat.agent import create_chat_agent, _node_timings, print_token_summary
 from models.mysql_db import create_session, add_chat_message
 from utils.intent import detect_chat_intent, Intent, extract_allergy_dislike, extract_ingredients_from_modification
 
@@ -295,8 +295,14 @@ async def chat_websocket(
     logger.info(f"[WS] Connected: {session_id}")
 
     if not rag_system:
-        logger.warning("[WS] RAG 시스템 없음")
-        await websocket.send_json({"type": "error", "message": "RAG 시스템을 사용할 수 없습니다."})
+        logger.error(
+            "[WS] RAG 시스템 없음 - 서버 환경변수(CLOVASTUDIO_API_KEY, NEO4J_URI 등)를 확인하세요."
+        )
+        await websocket.send_json({
+            "type": "error",
+            "message": "RAG 시스템을 사용할 수 없습니다. 서버 설정을 확인해 주세요.",
+            "detail": "CLOVASTUDIO_API_KEY 또는 NEO4J_URI 환경변수가 누락되었거나 Neo4j 연결에 실패했습니다.",
+        })
         await websocket.close()
         return
 
@@ -873,7 +879,9 @@ async def chat_websocket(
                 })
 
                 # 의도 분류
+                _intent_t0 = time.time()
                 user_intent = detect_chat_intent(content, chat_sessions[session_id]["messages"])
+                _node_timings["intent"] = (time.time() - _intent_t0) * 1000
                 logger.info(f"[WS] 의도 분류: {user_intent}")
 
                 # 알러지/비선호 감지 (회원만, 레시피 검색/수정이 아닐 때만)
@@ -917,8 +925,10 @@ async def chat_websocket(
                 # 1. 요리 무관 질문 → title 검색으로 재확인 후 외부 챗봇으로 리다이렉트
                 if user_intent == Intent.NOT_COOKING:
                     logger.info(f"[WS] 요리 무관 질문 감지 → title 검색으로 재확인")
-                    # title 매칭만 사용 (벡터 검색은 아무거나 반환하므로 제외)
-                    title_check = rag_system._milvus_title_search(content, k=1)
+                    # 짧은 입력(≤4단어)만 재확인: "베이컨" 같은 줄임말/신조어 대응
+                    # 긴 문장은 NOT_COOKING이 맞을 가능성이 높으므로 override 안 함
+                    word_count = len(content.strip().split())
+                    title_check = rag_system._milvus_title_search(content, k=1) if word_count <= 4 else []
                     if title_check and len(title_check) > 0:
                         logger.info(f"[WS] title 매칭 결과 있음 → RECIPE_SEARCH로 변경 (줄임말/신조어 가능)")
                         user_intent = Intent.RECIPE_SEARCH
@@ -1024,7 +1034,6 @@ async def chat_websocket(
                     dislike_trigger_keywords = ["싫어", "안먹어"]
                     if any(k in content for k in dislike_trigger_keywords):
                         try:
-                            from utils.intent import extract_allergy_dislike
                             dislike_data = extract_allergy_dislike(content, chat_history=None)
                             if dislike_data.get("type") == "dislike" and dislike_data.get("items"):
                                 new_dislikes = dislike_data["items"]
@@ -1222,6 +1231,7 @@ async def chat_websocket(
 
                     total_ms = (time.time() - start_time) * 1000
                     _print_timing_summary(total_ms)
+                    print_token_summary()
 
                     # 캐시 저장
                     agent_docs = result.get("documents", [])
@@ -1263,19 +1273,21 @@ async def chat_websocket(
                     elapsed = time.time() - start_time
                     logger.warning(f"[WS] Agent 타임아웃 ({elapsed:.1f}초)")
                     _print_timing_summary(elapsed * 1000)
-                    
+                    print_token_summary()
+
                     await websocket.send_json({
                         "type": "agent_message",
                         "content": f"죄송합니다. 응답 시간이 너무 오래 걸렸어요 ({int(elapsed)}초). 다시 시도해주세요."
                     })
-                    
+
                 except Exception as e:
                     elapsed = time.time() - start_time
                     logger.error(f"[WS] Agent 실행 에러 ({elapsed:.1f}초): {e}", exc_info=True)
                     _print_timing_summary(elapsed * 1000)
-                    
+                    print_token_summary()
+
                     await websocket.send_json({
-                        "type": "error", 
+                        "type": "error",
                         "message": f"오류가 발생했습니다 ({int(elapsed)}초). 다시 시도해주세요."
                     })
                     

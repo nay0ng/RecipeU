@@ -461,10 +461,10 @@ def detect_chat_intent(text: str, chat_history: list = None) -> str:
 **개인정보 보호: 이름, 전화번호, 주소, 이메일 등 개인정보(PII) 포함 입력은 무조건 NOT_COOKING**
 
 분류:
-1. NOT_COOKING (음식/요리 무관 또는 개인정보 포함)
-   예: "날씨", "영화", "여행", "제주도", "운동", "음악"
+1. NOT_COOKING (음식/요리와 완전 무관 또는 개인정보 포함)
+   예: "날씨", "영화", "여행", "제주도", "운동", "음악", "주식"
    예: "내 이름은 홍길동", "010-1234-5678", "서울시 강남구"
-   → 음식/요리 키워드 없거나 개인정보 포함 시 무조건 이것
+   → 요리/식재료와 전혀 관계없거나 개인정보 포함 시 무조건 이것
 
 2. RECIPE_MODIFY (레시피=Y + 재료 수정/제거)
    예: "딸기 빼줘", "A 말고 B", "더 맵게"
@@ -476,8 +476,9 @@ def detect_chat_intent(text: str, chat_history: list = None) -> str:
 3. RECIPE_SEARCH (음식/요리 관련, 레시피=N)
    예: "김치찌개", "케이크 먹을까", "빵"
 
-4. COOKING_QUESTION (요리 지식)
-   예: "보관법", "칼로리", "쯔유 대신 간장?"
+4. COOKING_QUESTION (음식/요리 관련 지식 질문)
+   예: "보관법", "칼로리", "쯔유 대신 간장?", "밥이 질어졌을 때 어떻게 해?", "베이컨 산 지 2주 됐는데 괜찮아?", "유통기한 지나도 먹어도 돼?"
+   → 식재료/조리 관련 질문이면 레시피 유무 상관없이 이것
 
 **출력 형식: 분류 키워드만 1개 출력 (설명 없이)**
 출력:"""
@@ -486,6 +487,13 @@ def detect_chat_intent(text: str, chat_history: list = None) -> str:
         llm = ChatClovaX(model="HCX-003", temperature=0.2, max_tokens=20)
         result = llm.invoke([HumanMessage(content=prompt)])
         decision = result.content.strip().upper().replace(" ", "")
+
+        # 토큰 사용량 추적 (agent.py의 _node_tokens 업데이트)
+        try:
+            from features.chat.agent import print_token_usage as _agent_token_usage
+            _agent_token_usage(result, "Intent 분류")
+        except Exception:
+            pass
 
         print(f"[Intent] 입력: {text}")
         print(f"[Intent] 레시피 존재: {has_recipe}")
